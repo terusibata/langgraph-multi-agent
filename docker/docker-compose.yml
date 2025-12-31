@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/langgraph_agents
+      - DATABASE_URL_SYNC=postgresql://postgres:postgres@db:5432/langgraph_agents
+      - REDIS_URL=redis://redis:6379/0
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - ACCESS_KEY_SECRET=${ACCESS_KEY_SECRET:-dev-secret-key-change-in-production}
+      - DEFAULT_MODEL_ID=${DEFAULT_MODEL_ID:-anthropic.claude-3-5-sonnet-20241022-v2:0}
+      - SUB_AGENT_MODEL_ID=${SUB_AGENT_MODEL_ID:-anthropic.claude-3-5-haiku-20241022-v1:0}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../src:/app/src:ro
+    networks:
+      - langgraph-network
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=langgraph_agents
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - langgraph-network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - langgraph-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  langgraph-network:
+    driver: bridge

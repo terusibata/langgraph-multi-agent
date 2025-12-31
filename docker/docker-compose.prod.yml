@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL_SYNC=${DATABASE_URL_SYNC}
+      - REDIS_URL=${REDIS_URL}
+      - AWS_REGION=${AWS_REGION}
+      - ACCESS_KEY_SECRET=${ACCESS_KEY_SECRET}
+      - DEFAULT_MODEL_ID=${DEFAULT_MODEL_ID}
+      - SUB_AGENT_MODEL_ID=${SUB_AGENT_MODEL_ID}
+      - CONTEXT_WARNING_THRESHOLD=${CONTEXT_WARNING_THRESHOLD:-80}
+      - CONTEXT_LOCK_THRESHOLD=${CONTEXT_LOCK_THRESHOLD:-95}
+      - PARALLEL_TIMEOUT_SECONDS=${PARALLEL_TIMEOUT_SECONDS:-30}
+      - SESSION_TIMEOUT_SECONDS=${SESSION_TIMEOUT_SECONDS:-300}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+    networks:
+      - langgraph-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+networks:
+  langgraph-network:
+    driver: bridge
