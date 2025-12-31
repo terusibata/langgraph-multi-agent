@@ -74,18 +74,18 @@ class SSEManager:
         self._closed = True
         await self._queue.put(None)
 
-    async def events(self) -> AsyncIterator[str]:
+    async def events(self) -> AsyncIterator[dict]:
         """
-        Iterate over events as SSE formatted strings.
+        Iterate over events as dicts for sse-starlette.
 
         Yields:
-            SSE formatted event strings
+            Event dicts with event, data, and id keys
         """
         while True:
             event = await self._queue.get()
             if event is None:
                 break
-            yield event.to_sse()
+            yield event.to_sse_dict()
 
     # Event emission helpers
 
@@ -283,13 +283,13 @@ class SSEManager:
 
 
 def create_sse_response(
-    event_generator: AsyncIterator[str],
+    event_generator: AsyncIterator[dict],
 ) -> EventSourceResponse:
     """
     Create an SSE response from an event generator.
 
     Args:
-        event_generator: Async iterator yielding SSE formatted strings
+        event_generator: Async iterator yielding event dicts
 
     Returns:
         EventSourceResponse

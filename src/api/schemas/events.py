@@ -37,8 +37,16 @@ class BaseEvent(BaseModel):
     )
 
     def to_sse(self) -> str:
-        """Convert event to SSE format."""
+        """Convert event to SSE format string."""
         return f"event: {self.event_type}\ndata: {self.model_dump_json()}\n\n"
+
+    def to_sse_dict(self) -> dict:
+        """Convert event to dict format for sse-starlette."""
+        return {
+            "event": self.event_type,
+            "data": self.model_dump_json(),
+            "id": self.event_id,
+        }
 
 
 class SessionStartEvent(BaseEvent):

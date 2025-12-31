@@ -7,7 +7,7 @@ from sse_starlette.sse import EventSourceResponse
 import structlog
 
 from src.api.middleware.access_key import verify_access_key, RequestContext, check_permission
-from src.api.middleware.service_tokens import extract_service_tokens, ServiceTokens
+from src.api.middleware.service_tokens import extract_service_tokens
 from src.api.schemas.request import AgentStreamRequest, AgentInvokeRequest
 from src.api.schemas.response import (
     ErrorResponse,
@@ -21,8 +21,7 @@ from src.api.schemas.response import (
 from src.agents.graph import create_graph
 from src.agents.state import RequestContext as AgentRequestContext
 from src.agents.registry import get_agent_registry, get_tool_registry, initialize_registries
-from src.services.streaming import SSEManager, create_sse_response
-from src.services.thread import get_thread_manager
+from src.services.streaming import SSEManager
 from src.services.error import get_error_handler, AgentError
 from src.config import get_settings
 from src.config.models import get_available_models

@@ -2,7 +2,7 @@
 
 from typing import Literal, Any, AsyncIterator
 
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langchain_core.messages import HumanMessage
 import structlog
@@ -61,8 +61,8 @@ class MultiAgentGraph:
         graph.add_node("evaluate", self._evaluate_node)
         graph.add_node("synthesize", self._synthesize_node)
 
-        # Set entry point
-        graph.set_entry_point("plan")
+        # Set entry point using START constant
+        graph.add_edge(START, "plan")
 
         # Add conditional edges
         graph.add_conditional_edges(
@@ -284,7 +284,7 @@ class MultiAgentGraph:
         sse_manager: SSEManager,
         thread_id: str | None = None,
         checkpointer: Any = None,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[dict]:
         """
         Run the graph with SSE streaming.
 
@@ -296,7 +296,7 @@ class MultiAgentGraph:
             checkpointer: Optional checkpointer
 
         Yields:
-            SSE formatted event strings
+            Event dicts for sse-starlette
         """
         try:
             # Check thread status

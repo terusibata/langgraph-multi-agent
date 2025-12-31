@@ -1,6 +1,5 @@
 """Agent and Tool registry for dynamic registration and lookup."""
 
-from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
