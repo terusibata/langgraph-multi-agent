@@ -7,6 +7,13 @@ from src.agents.tools.dynamic import (
     get_dynamic_tool,
     create_dynamic_tools_for_agent,
 )
+from src.agents.tools.openapi import (
+    OpenAPIParser,
+    OpenAPIParseError,
+    OpenAPIToolGenerator,
+    parse_openapi_spec,
+    generate_tools_from_openapi,
+)
 
 __all__ = [
     "ToolBase",
@@ -17,4 +24,9 @@ __all__ = [
     "DynamicToolFactory",
     "get_dynamic_tool",
     "create_dynamic_tools_for_agent",
+    "OpenAPIParser",
+    "OpenAPIParseError",
+    "OpenAPIToolGenerator",
+    "parse_openapi_spec",
+    "generate_tools_from_openapi",
 ]

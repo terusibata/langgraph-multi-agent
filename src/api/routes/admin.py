@@ -26,6 +26,11 @@ from src.api.schemas.admin import (
     BulkOperationResponse,
     ImportRequest,
     ImportResponse,
+    # OpenAPI schemas
+    OpenAPIImportRequest,
+    OpenAPIImportFromURLRequest,
+    OpenAPIImportResponse,
+    OpenAPIToolPreview,
 )
 from src.api.schemas.response import ErrorResponse
 from src.agents.registry import (
@@ -835,3 +840,205 @@ async def import_definitions(
         errors=errors,
         warnings=warnings,
     )
+
+
+# =============================================================================
+# OpenAPI Import
+# =============================================================================
+
+
+@router.post(
+    "/tools/openapi",
+    response_model=OpenAPIImportResponse,
+    summary="Import tools from OpenAPI specification",
+)
+async def import_openapi_tools(
+    context: Annotated[RequestContext, Depends(check_permission("admin:tools:write"))],
+    body: OpenAPIImportRequest,
+):
+    """
+    Generate and register tools from an OpenAPI 3.x specification.
+
+    Each operation in the OpenAPI spec will be converted to a tool:
+    - operationId becomes the tool name (sanitized to snake_case)
+    - summary/description becomes the tool description
+    - parameters are extracted from path, query, header, and body
+    - Base URL is taken from servers or can be overridden
+
+    Use the options to filter operations by tags or operationIds.
+    """
+    from src.agents.tools.openapi import OpenAPIParser, OpenAPIParseError
+
+    errors = []
+    warnings = []
+    tools_preview = []
+
+    try:
+        # Parse the spec
+        parser = OpenAPIParser.from_json(body.spec)
+
+        # Build options dict
+        options = body.options.model_dump(exclude_none=True)
+
+        # Convert auth_config if present
+        if "auth_config" in options and options["auth_config"]:
+            auth = options["auth_config"]
+            options["auth_config"] = {
+                "type": auth.get("type", "none"),
+                "header": auth.get("header_name"),
+                "key_env": auth.get("token_env"),
+            }
+
+        # Don't register if validate_only
+        options["register"] = not body.validate_only
+
+        # Generate tools
+        from src.agents.tools.openapi import OpenAPIToolGenerator
+        generator = OpenAPIToolGenerator()
+        tools = await generator.generate_tools_from_spec(body.spec, options)
+
+        # Build preview
+        for tool in tools:
+            metadata = tool.metadata or {}
+            tools_preview.append(OpenAPIToolPreview(
+                name=tool.name,
+                description=tool.description,
+                method=metadata.get("original_method", ""),
+                path=metadata.get("original_path", ""),
+                parameters=tool.parameters,
+                tags=metadata.get("tags", []),
+            ))
+
+        logger.info(
+            "openapi_import_complete",
+            source=parser.info.get("title", "Unknown"),
+            tools_generated=len(tools),
+            user_id=context.user_id,
+        )
+
+        return OpenAPIImportResponse(
+            success=True,
+            tools_generated=len(tools),
+            tools_registered=len(tools) if not body.validate_only else 0,
+            tools=tools_preview,
+            errors=errors,
+            warnings=warnings,
+            source=parser.info.get("title"),
+        )
+
+    except OpenAPIParseError as e:
+        logger.warning("openapi_parse_error", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid OpenAPI specification: {str(e)}",
+        )
+    except Exception as e:
+        logger.error("openapi_import_error", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to import OpenAPI specification: {str(e)}",
+        )
+
+
+@router.post(
+    "/tools/openapi/url",
+    response_model=OpenAPIImportResponse,
+    summary="Import tools from OpenAPI specification URL",
+)
+async def import_openapi_tools_from_url(
+    context: Annotated[RequestContext, Depends(check_permission("admin:tools:write"))],
+    body: OpenAPIImportFromURLRequest,
+):
+    """
+    Fetch and import tools from an OpenAPI specification URL.
+
+    The URL should point to a valid OpenAPI 3.x specification in JSON or YAML format.
+    """
+    from src.agents.tools.openapi import OpenAPIToolGenerator, OpenAPIParseError
+
+    try:
+        # Build options dict
+        options = body.options.model_dump(exclude_none=True)
+
+        # Convert auth_config if present
+        if "auth_config" in options and options["auth_config"]:
+            auth = options["auth_config"]
+            options["auth_config"] = {
+                "type": auth.get("type", "none"),
+                "header": auth.get("header_name"),
+                "key_env": auth.get("token_env"),
+            }
+
+        # Don't register if validate_only
+        options["register"] = not body.validate_only
+
+        # Fetch and generate
+        generator = OpenAPIToolGenerator()
+        tools = await generator.generate_from_url(body.url, options)
+
+        # Build preview
+        tools_preview = []
+        source_title = None
+
+        for tool in tools:
+            metadata = tool.metadata or {}
+            if not source_title:
+                source_title = metadata.get("openapi_source")
+            tools_preview.append(OpenAPIToolPreview(
+                name=tool.name,
+                description=tool.description,
+                method=metadata.get("original_method", ""),
+                path=metadata.get("original_path", ""),
+                parameters=tool.parameters,
+                tags=metadata.get("tags", []),
+            ))
+
+        logger.info(
+            "openapi_url_import_complete",
+            url=body.url,
+            source=source_title,
+            tools_generated=len(tools),
+            user_id=context.user_id,
+        )
+
+        return OpenAPIImportResponse(
+            success=True,
+            tools_generated=len(tools),
+            tools_registered=len(tools) if not body.validate_only else 0,
+            tools=tools_preview,
+            errors=[],
+            warnings=[],
+            source=source_title,
+        )
+
+    except OpenAPIParseError as e:
+        logger.warning("openapi_url_parse_error", url=body.url, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid OpenAPI specification: {str(e)}",
+        )
+    except Exception as e:
+        logger.error("openapi_url_import_error", url=body.url, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch or import OpenAPI specification: {str(e)}",
+        )
+
+
+@router.post(
+    "/tools/openapi/preview",
+    response_model=OpenAPIImportResponse,
+    summary="Preview tools from OpenAPI specification",
+)
+async def preview_openapi_tools(
+    context: Annotated[RequestContext, Depends(check_permission("admin:tools:read"))],
+    body: OpenAPIImportRequest,
+):
+    """
+    Preview tools that would be generated from an OpenAPI specification.
+
+    This endpoint does not register any tools, it only shows what would be created.
+    """
+    # Force validate_only
+    body.validate_only = True
+    return await import_openapi_tools(context, body)

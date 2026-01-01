@@ -480,3 +480,175 @@ class ImportResponse(BaseModel):
     imported_agents: int = Field(default=0, description="Number of agents imported")
     errors: list[str] = Field(default_factory=list, description="Import errors")
     warnings: list[str] = Field(default_factory=list, description="Import warnings")
+
+
+# =============================================================================
+# OpenAPI Schemas
+# =============================================================================
+
+
+class OpenAPIAuthConfig(BaseModel):
+    """Authentication configuration for OpenAPI tools."""
+
+    type: Literal["none", "bearer", "api_key", "basic", "oauth2", "service_token"] = Field(
+        default="none", description="Authentication type"
+    )
+    token_env: str | None = Field(
+        default=None, description="Environment variable for token"
+    )
+    header_name: str | None = Field(
+        default=None, description="Header name for API key"
+    )
+    service_name: str | None = Field(
+        default=None, description="Service token name from context"
+    )
+
+
+class OpenAPIImportOptions(BaseModel):
+    """Options for importing OpenAPI specification."""
+
+    base_url: str | None = Field(
+        default=None, description="Override base URL from spec"
+    )
+    prefix: str | None = Field(
+        default=None,
+        pattern=r"^[a-z][a-z0-9_]*$",
+        description="Prefix for generated tool names",
+    )
+    include_operations: list[str] | None = Field(
+        default=None, description="Only include these operationIds"
+    )
+    exclude_operations: list[str] | None = Field(
+        default=None, description="Exclude these operationIds"
+    )
+    include_tags: list[str] | None = Field(
+        default=None, description="Only include operations with these tags"
+    )
+    exclude_tags: list[str] | None = Field(
+        default=None, description="Exclude operations with these tags"
+    )
+    auth_config: OpenAPIAuthConfig | None = Field(
+        default=None, description="Authentication configuration"
+    )
+    enabled: bool = Field(
+        default=True, description="Whether generated tools should be enabled"
+    )
+
+
+class OpenAPIImportRequest(BaseModel):
+    """Request for importing tools from OpenAPI specification."""
+
+    spec: dict = Field(
+        ..., description="OpenAPI 3.x specification as JSON object"
+    )
+    options: OpenAPIImportOptions = Field(
+        default_factory=OpenAPIImportOptions,
+        description="Import options",
+    )
+    validate_only: bool = Field(
+        default=False, description="Only validate, don't register tools"
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "spec": {
+                        "openapi": "3.0.0",
+                        "info": {
+                            "title": "Weather API",
+                            "version": "1.0.0"
+                        },
+                        "servers": [
+                            {"url": "https://api.weather.com/v1"}
+                        ],
+                        "paths": {
+                            "/weather": {
+                                "get": {
+                                    "operationId": "getCurrentWeather",
+                                    "summary": "Get current weather for a location",
+                                    "parameters": [
+                                        {
+                                            "name": "location",
+                                            "in": "query",
+                                            "required": True,
+                                            "schema": {"type": "string"}
+                                        }
+                                    ],
+                                    "responses": {
+                                        "200": {
+                                            "description": "Weather data"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "options": {
+                        "prefix": "weather",
+                        "enabled": True
+                    }
+                }
+            ]
+        }
+    }
+
+
+class OpenAPIImportFromURLRequest(BaseModel):
+    """Request for importing tools from OpenAPI specification URL."""
+
+    url: str = Field(
+        ...,
+        description="URL to OpenAPI specification (JSON or YAML)",
+    )
+    options: OpenAPIImportOptions = Field(
+        default_factory=OpenAPIImportOptions,
+        description="Import options",
+    )
+    validate_only: bool = Field(
+        default=False, description="Only validate, don't register tools"
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "url": "https://api.example.com/openapi.json",
+                    "options": {
+                        "prefix": "example",
+                        "include_tags": ["public"],
+                        "auth_config": {
+                            "type": "api_key",
+                            "header_name": "X-API-Key",
+                            "token_env": "EXAMPLE_API_KEY"
+                        }
+                    }
+                }
+            ]
+        }
+    }
+
+
+class OpenAPIToolPreview(BaseModel):
+    """Preview of a tool that will be generated from OpenAPI."""
+
+    name: str = Field(..., description="Generated tool name")
+    description: str = Field(..., description="Tool description")
+    method: str = Field(..., description="HTTP method")
+    path: str = Field(..., description="API path")
+    parameters: list[dict] = Field(..., description="Tool parameters")
+    tags: list[str] = Field(default_factory=list, description="OpenAPI tags")
+
+
+class OpenAPIImportResponse(BaseModel):
+    """Response from importing OpenAPI specification."""
+
+    success: bool = Field(..., description="Whether import succeeded")
+    tools_generated: int = Field(..., description="Number of tools generated")
+    tools_registered: int = Field(..., description="Number of tools registered")
+    tools: list[OpenAPIToolPreview] = Field(
+        default_factory=list, description="Preview of generated tools"
+    )
+    errors: list[str] = Field(default_factory=list, description="Import errors")
+    warnings: list[str] = Field(default_factory=list, description="Import warnings")
+    source: str | None = Field(default=None, description="Source API title")
