@@ -19,12 +19,16 @@ class ToolParameterSchema(BaseModel):
     type: Literal["string", "integer", "number", "boolean", "array", "object"] = Field(
         ..., description="Parameter type"
     )
-    description: str = Field(..., description="Parameter description")
+    description: str = Field(default="", description="Parameter description")
     required: bool = Field(default=False, description="Whether parameter is required")
     default: Any = Field(default=None, description="Default value")
     enum: list[Any] | None = Field(default=None, description="Allowed values")
     items: dict | None = Field(default=None, description="Array item schema")
     properties: dict | None = Field(default=None, description="Object properties schema")
+    # Additional field for OpenAPI 'in' parameter location
+    in_: str | None = Field(default=None, alias="in", description="Parameter location (query, path, header, body)")
+
+    model_config = {"populate_by_name": True}
 
 
 class ToolExecutorConfig(BaseModel):
@@ -183,7 +187,7 @@ class ToolDefinitionResponse(BaseModel):
     name: str = Field(..., description="Tool name")
     description: str = Field(..., description="Tool description")
     category: str = Field(..., description="Tool category")
-    parameters: list[ToolParameterSchema] = Field(..., description="Tool parameters")
+    parameters: list[ToolParameterSchema] = Field(default_factory=list, description="Tool parameters")
     executor: ToolExecutorConfig = Field(..., description="Executor configuration")
     required_service_token: str | None = Field(
         default=None, description="Required service token"
@@ -191,8 +195,8 @@ class ToolDefinitionResponse(BaseModel):
     timeout_seconds: int = Field(..., description="Execution timeout")
     enabled: bool = Field(..., description="Whether tool is enabled")
     metadata: dict = Field(default_factory=dict, description="Additional metadata")
-    created_at: datetime = Field(..., description="Creation timestamp")
-    updated_at: datetime = Field(..., description="Last update timestamp")
+    created_at: datetime | None = Field(default=None, description="Creation timestamp")
+    updated_at: datetime | None = Field(default=None, description="Last update timestamp")
     created_by: str | None = Field(default=None, description="Creator user ID")
 
 
@@ -371,14 +375,14 @@ class AgentDefinitionResponse(BaseModel):
     name: str = Field(..., description="Agent name")
     description: str = Field(..., description="Agent description")
     capabilities: list[str] = Field(..., description="Agent capabilities")
-    tools: list[str] = Field(..., description="Tool names")
+    tools: list[str] = Field(default_factory=list, description="Tool names")
     executor: AgentExecutorConfig = Field(..., description="Executor configuration")
     retry_strategy: RetryStrategyConfig = Field(..., description="Retry configuration")
     priority: int = Field(..., description="Agent priority")
     enabled: bool = Field(..., description="Whether agent is enabled")
     metadata: dict = Field(default_factory=dict, description="Additional metadata")
-    created_at: datetime = Field(..., description="Creation timestamp")
-    updated_at: datetime = Field(..., description="Last update timestamp")
+    created_at: datetime | None = Field(default=None, description="Creation timestamp")
+    updated_at: datetime | None = Field(default=None, description="Last update timestamp")
     created_by: str | None = Field(default=None, description="Creator user ID")
 
 

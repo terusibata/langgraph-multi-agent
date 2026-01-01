@@ -287,12 +287,13 @@ async def test_tool(
     # Create dynamic tool
     tool = DynamicToolFactory.create(definition)
 
-    # Create test context
+    # Create test context (only allow service_tokens from mock_context)
+    mock_service_tokens = body.mock_context.get("service_tokens", {})
     tool_context = ToolContext(
         tenant_id=context.tenant_id,
         user_id=context.user_id,
         request_id=context.request_id,
-        **body.mock_context,
+        service_tokens=mock_service_tokens,
     )
 
     # Execute (with dry_run if specified)
