@@ -60,16 +60,23 @@ class Planner:
         self.output_parser = JsonOutputParser()
 
     def get_available_agents_description(self) -> str:
-        """Get description of available agents."""
+        """Get description of available agents (static and dynamic)."""
         registry = get_agent_registry()
-        agents = registry.list_enabled()
 
         descriptions = []
-        for agent in agents:
-            config = registry.get_agent_config(agent.name)
+
+        # Add static agents
+        for agent in registry.list_enabled():
             capabilities = ", ".join(agent.capabilities)
             descriptions.append(
                 f"- {agent.name}: {agent.description}\n  能力: {capabilities}"
+            )
+
+        # Add dynamic agents
+        for definition in registry.list_enabled_definitions():
+            capabilities = ", ".join(definition.capabilities)
+            descriptions.append(
+                f"- {definition.name}: {definition.description}\n  能力: {capabilities}"
             )
 
         return "\n".join(descriptions)

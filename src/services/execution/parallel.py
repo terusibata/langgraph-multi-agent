@@ -8,6 +8,7 @@ import structlog
 
 from src.agents.state import AgentState, SubAgentResult
 from src.agents.registry import get_agent_registry
+from src.agents.sub_agents.dynamic import DynamicAgentFactory
 from src.config import get_settings
 
 logger = structlog.get_logger()
@@ -61,6 +62,18 @@ class ParallelExecutor:
         tasks = {}
         for agent_name in agent_names:
             agent = registry.get(agent_name)
+
+            # If not a static agent, check for dynamic agent definition
+            if not agent:
+                definition = registry.get_definition(agent_name)
+                if definition:
+                    agent = DynamicAgentFactory.create(definition)
+                    logger.debug(
+                        "using_dynamic_agent",
+                        agent_name=agent_name,
+                        session_id=state["session_id"],
+                    )
+
             if agent:
                 # Get task parameters from plan
                 task_params = self._get_task_params(state, agent_name)

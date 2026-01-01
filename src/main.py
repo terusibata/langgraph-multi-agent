@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import structlog
 
-from src.api.routes import agent_router, threads_router, health_router
+from src.api.routes import agent_router, threads_router, health_router, admin_router
 from src.agents.registry import initialize_registries, register_all_tools, register_all_agents
 from src.config import get_settings
 from src import __version__
@@ -110,6 +110,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(agent_router, prefix=settings.api_prefix)
     app.include_router(threads_router, prefix=settings.api_prefix)
+    app.include_router(admin_router, prefix=settings.api_prefix)
 
     return app
 
