@@ -714,6 +714,100 @@ def load_agents_config(config_path: str | None = None) -> dict[str, Any]:
         return {}
 
 
+class TemplateAgentDefinition:
+    """
+    Template agent definition loaded from configuration.
+
+    Templates are pre-configured agent patterns that can be quickly
+    instantiated by the Planner.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        purpose: str,
+        capabilities: list[str],
+        tools: list[str],
+        parallel_execution: bool = False,
+        expected_output: str = "",
+        enabled: bool = True,
+    ):
+        self.name = name
+        self.description = description
+        self.purpose = purpose
+        self.capabilities = capabilities
+        self.tools = tools
+        self.parallel_execution = parallel_execution
+        self.expected_output = expected_output
+        self.enabled = enabled
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary."""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "purpose": self.purpose,
+            "capabilities": self.capabilities,
+            "tools": self.tools,
+            "parallel_execution": self.parallel_execution,
+            "expected_output": self.expected_output,
+            "enabled": self.enabled,
+        }
+
+    @classmethod
+    def from_dict(cls, name: str, data: dict) -> "TemplateAgentDefinition":
+        """Create from dictionary."""
+        return cls(
+            name=name,
+            description=data.get("description", ""),
+            purpose=data.get("purpose", ""),
+            capabilities=data.get("capabilities", []),
+            tools=data.get("tools", []),
+            parallel_execution=data.get("parallel_execution", False),
+            expected_output=data.get("expected_output", ""),
+            enabled=data.get("enabled", True),
+        )
+
+
+# Template agents registry
+_template_agents: dict[str, TemplateAgentDefinition] = {}
+
+
+def get_template_agents() -> dict[str, TemplateAgentDefinition]:
+    """Get all template agent definitions."""
+    return _template_agents
+
+
+def get_template_agent(name: str) -> TemplateAgentDefinition | None:
+    """Get a template agent by name."""
+    return _template_agents.get(name)
+
+
+def list_enabled_templates() -> list[TemplateAgentDefinition]:
+    """List all enabled template agents."""
+    return [t for t in _template_agents.values() if t.enabled]
+
+
+# Planning configuration
+_planning_config: dict = {}
+
+
+def get_planning_config() -> dict:
+    """Get the planning configuration."""
+    return _planning_config
+
+
+def is_dynamic_mode() -> bool:
+    """Check if dynamic mode is enabled."""
+    return _planning_config.get("dynamic_mode", True)
+
+
+def should_prefer_templates() -> bool:
+    """Check if templates should be preferred over ad-hoc agents."""
+    return _planning_config.get("prefer_templates", True)
+
+
 def initialize_registries(config_path: str | None = None) -> None:
     """
     Initialize registries with configuration.
@@ -721,6 +815,8 @@ def initialize_registries(config_path: str | None = None) -> None:
     Args:
         config_path: Optional path to agents.yaml
     """
+    global _template_agents, _planning_config
+
     config = load_agents_config(config_path)
 
     # Load configurations
@@ -730,10 +826,21 @@ def initialize_registries(config_path: str | None = None) -> None:
     tool_registry.load_config(config.get("tools", {}))
     agent_registry.load_config(config.get("sub_agents", {}))
 
+    # Load planning configuration
+    _planning_config = config.get("planning", {})
+
+    # Load template agents
+    _template_agents = {}
+    for name, template_config in config.get("template_agents", {}).items():
+        template = TemplateAgentDefinition.from_dict(name, template_config)
+        _template_agents[name] = template
+
     logger.info(
         "registries_initialized",
         tools_configured=len(config.get("tools", {})),
         agents_configured=len(config.get("sub_agents", {})),
+        templates_configured=len(_template_agents),
+        dynamic_mode=_planning_config.get("dynamic_mode", True),
     )
 
 

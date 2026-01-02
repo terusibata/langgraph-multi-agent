@@ -20,28 +20,45 @@ class MainAgent:
 
     Responsibilities:
     - Analyze user intent
-    - Create execution plans
+    - Create execution plans (with dynamic ad-hoc agent generation in dynamic mode)
     - Route to appropriate SubAgents
     - Evaluate intermediate results
     - Generate final responses
+
+    The MainAgent supports two modes:
+    - Simple mode: Uses only pre-defined agents
+    - Dynamic mode: Can generate ad-hoc agents on-the-fly based on available tools
     """
 
-    def __init__(self, llm: Any, model_id: str | None = None):
+    def __init__(
+        self,
+        llm: Any,
+        model_id: str | None = None,
+        dynamic_mode: bool = True,
+    ):
         """
         Initialize the MainAgent.
 
         Args:
             llm: Language model instance
             model_id: Optional model ID override
+            dynamic_mode: Enable dynamic ad-hoc agent generation
         """
         self.llm = llm
         self.model_id = model_id or get_settings().default_model_id
+        self.dynamic_mode = dynamic_mode
 
         # Initialize components
-        self.planner = Planner(llm)
+        self.planner = Planner(llm, dynamic_mode=dynamic_mode)
         self.router = Router()
         self.evaluator = Evaluator(llm)
         self.synthesizer = Synthesizer(llm)
+
+        logger.info(
+            "main_agent_initialized",
+            model_id=self.model_id,
+            dynamic_mode=self.dynamic_mode,
+        )
 
     async def plan(self, state: AgentState) -> AgentState:
         """
