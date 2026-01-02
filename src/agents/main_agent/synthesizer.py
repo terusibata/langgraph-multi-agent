@@ -56,27 +56,48 @@ class Synthesizer:
         user_input = state["user_input"]
         sub_agent_results = state["sub_agent_results"]
         evaluation = state["intermediate_evaluation"]
+        messages = state["messages"]
 
         # Format context for synthesis
         context = self._build_context(sub_agent_results, evaluation)
 
-        # Build prompt with caching enabled for system prompt
-        prompt = ChatPromptTemplate.from_messages([
+        # Build conversation history context (last 10 messages, excluding current)
+        conversation_history = self._format_conversation_history(messages[:-1])
+
+        # Build prompt with caching enabled for system prompt AND conversation history
+        messages_list = [
             SystemMessage(
                 content=[
                     {"type": "text", "text": SYNTHESIZER_SYSTEM_PROMPT},
                     {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
                 ]
             ),
+        ]
+
+        # Add conversation history with caching if available
+        if conversation_history:
+            messages_list.append(
+                SystemMessage(
+                    content=[
+                        {"type": "text", "text": f"## 会話履歴\n\n{conversation_history}"},
+                        {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
+                    ]
+                )
+            )
+
+        # Add current request
+        messages_list.append(
             HumanMessage(content=f"""
 ユーザーの質問: {user_input}
 
 収集した情報:
 {context}
 
-上記の情報を基に、ユーザーへの回答を生成してください。
-"""),
-        ])
+上記の情報を基に、ユーザーへの回答を生成してください。会話履歴がある場合は、その文脈も考慮してください。
+""")
+        )
+
+        prompt = ChatPromptTemplate.from_messages(messages_list)
 
         try:
             chain = prompt | self.llm
@@ -113,26 +134,47 @@ class Synthesizer:
         user_input = state["user_input"]
         sub_agent_results = state["sub_agent_results"]
         evaluation = state["intermediate_evaluation"]
+        messages = state["messages"]
 
         context = self._build_context(sub_agent_results, evaluation)
 
-        # Build prompt with caching enabled for system prompt
-        prompt = ChatPromptTemplate.from_messages([
+        # Build conversation history context (last 10 messages, excluding current)
+        conversation_history = self._format_conversation_history(messages[:-1])
+
+        # Build prompt with caching enabled for system prompt AND conversation history
+        messages_list = [
             SystemMessage(
                 content=[
                     {"type": "text", "text": SYNTHESIZER_SYSTEM_PROMPT},
                     {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
                 ]
             ),
+        ]
+
+        # Add conversation history with caching if available
+        if conversation_history:
+            messages_list.append(
+                SystemMessage(
+                    content=[
+                        {"type": "text", "text": f"## 会話履歴\n\n{conversation_history}"},
+                        {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
+                    ]
+                )
+            )
+
+        # Add current request
+        messages_list.append(
             HumanMessage(content=f"""
 ユーザーの質問: {user_input}
 
 収集した情報:
 {context}
 
-上記の情報を基に、ユーザーへの回答を生成してください。
-"""),
-        ])
+上記の情報を基に、ユーザーへの回答を生成してください。会話履歴がある場合は、その文脈も考慮してください。
+""")
+        )
+
+        prompt = ChatPromptTemplate.from_messages(messages_list)
 
         try:
             chain = prompt | self.llm
@@ -218,6 +260,33 @@ class Synthesizer:
             else:
                 lines.append(f"- **{key}**: {str(value)[:100]}")
         return "\n".join(lines)
+
+    def _format_conversation_history(self, messages: list) -> str:
+        """
+        Format conversation history for inclusion in prompt.
+
+        Args:
+            messages: List of BaseMessage objects from conversation history
+
+        Returns:
+            Formatted conversation history string (last 10 messages)
+        """
+        if not messages:
+            return ""
+
+        # Take last 10 messages for context (5 turns)
+        recent_messages = messages[-10:] if len(messages) > 10 else messages
+
+        formatted = []
+        for msg in recent_messages:
+            role = "User" if msg.type == "human" else "Assistant"
+            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            # Truncate long messages
+            if len(content) > 500:
+                content = content[:500] + "..."
+            formatted.append(f"**{role}**: {content}")
+
+        return "\n\n".join(formatted)
 
     def _generate_fallback_response(self, sub_agent_results: dict) -> str:
         """Generate a fallback response when synthesis fails."""

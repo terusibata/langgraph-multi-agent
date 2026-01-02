@@ -62,27 +62,43 @@ class Evaluator:
         """
         user_input = state["user_input"]
         sub_agent_results = state["sub_agent_results"]
+        messages = state["messages"]
 
         # Format results for evaluation
         results_summary = self._format_results_summary(sub_agent_results)
 
+        # Build conversation history (last 6 messages for brief context)
+        conversation_history = self._format_conversation_history(messages[:-1], max_messages=6)
+
         # Build prompt with caching enabled for system prompt
-        prompt = ChatPromptTemplate.from_messages([
+        messages_list = [
             SystemMessage(
                 content=[
                     {"type": "text", "text": EVALUATOR_SYSTEM_PROMPT},
                     {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
                 ]
             ),
+        ]
+
+        # Add conversation history if available
+        if conversation_history:
+            messages_list.append(
+                SystemMessage(content=f"## 会話履歴\n\n{conversation_history}")
+            )
+
+        # Add current evaluation request
+        messages_list.append(
             HumanMessage(content=f"""
 ユーザーの質問: {user_input}
 
 検索結果:
 {results_summary}
 
-これらの結果を評価し、次のアクションを決定してください。
-"""),
-        ])
+これらの結果を評価し、次のアクションを決定してください。会話履歴がある場合は、その文脈も考慮してください。
+""")
+        )
+
+        prompt = ChatPromptTemplate.from_messages(messages_list)
 
         try:
             chain = prompt | self.llm | self.output_parser
@@ -170,6 +186,34 @@ class Evaluator:
             return str(data)[:500]
 
         return str(data)[:500]
+
+    def _format_conversation_history(self, messages: list, max_messages: int = 10) -> str:
+        """
+        Format conversation history for inclusion in prompt.
+
+        Args:
+            messages: List of BaseMessage objects from conversation history
+            max_messages: Maximum number of messages to include
+
+        Returns:
+            Formatted conversation history string
+        """
+        if not messages:
+            return ""
+
+        # Take last N messages for context
+        recent_messages = messages[-max_messages:] if len(messages) > max_messages else messages
+
+        formatted = []
+        for msg in recent_messages:
+            role = "User" if msg.type == "human" else "Assistant"
+            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            # Truncate long messages
+            if len(content) > 300:
+                content = content[:300] + "..."
+            formatted.append(f"**{role}**: {content}")
+
+        return "\n\n".join(formatted)
 
     def _create_default_evaluation(self, sub_agent_results: dict) -> Evaluation:
         """Create a default evaluation based on results."""
