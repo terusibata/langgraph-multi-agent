@@ -17,20 +17,22 @@ class ModelConfig:
     cache_read_cost_per_1k: float   # Cost for reading from cache (cache_read)
     max_tokens: int
     context_window: int
+    supports_caching: bool = True   # Whether model supports prompt caching
 
 
 # Bedrock model configurations
 # Pricing based on AWS Bedrock pricing (as of 2025)
-# Cache write cost: ~2.5x standard input cost
-# Cache read cost: ~0.2x standard input cost (10% in some regions, 20% average)
+# Cache write cost: 1.25x standard input cost (5-minute TTL)
+# Cache read cost: 0.1x standard input cost (90% discount)
+# Reference: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
 BEDROCK_MODELS: dict[str, ModelConfig] = {
     "anthropic.claude-3-7-sonnet-20250219-v1:0": ModelConfig(
         model_id="anthropic.claude-3-7-sonnet-20250219-v1:0",
         provider="bedrock",
         input_cost_per_1k=0.003,
         output_cost_per_1k=0.015,
-        cache_write_cost_per_1k=0.0075,  # 2.5x input cost
-        cache_read_cost_per_1k=0.0006,   # 0.2x input cost
+        cache_write_cost_per_1k=0.00375,  # 1.25x input cost
+        cache_read_cost_per_1k=0.0003,    # 0.1x input cost
         max_tokens=8192,
         context_window=200000,
     ),
@@ -39,8 +41,8 @@ BEDROCK_MODELS: dict[str, ModelConfig] = {
         provider="bedrock",
         input_cost_per_1k=0.003,
         output_cost_per_1k=0.015,
-        cache_write_cost_per_1k=0.0075,  # 2.5x input cost
-        cache_read_cost_per_1k=0.0006,   # 0.2x input cost
+        cache_write_cost_per_1k=0.00375,  # 1.25x input cost
+        cache_read_cost_per_1k=0.0003,    # 0.1x input cost
         max_tokens=8192,
         context_window=200000,
     ),
@@ -49,8 +51,8 @@ BEDROCK_MODELS: dict[str, ModelConfig] = {
         provider="bedrock",
         input_cost_per_1k=0.0008,
         output_cost_per_1k=0.004,
-        cache_write_cost_per_1k=0.002,   # 2.5x input cost
-        cache_read_cost_per_1k=0.00016,  # 0.2x input cost
+        cache_write_cost_per_1k=0.001,    # 1.25x input cost
+        cache_read_cost_per_1k=0.00008,   # 0.1x input cost
         max_tokens=8192,
         context_window=200000,
     ),
@@ -59,8 +61,8 @@ BEDROCK_MODELS: dict[str, ModelConfig] = {
         provider="bedrock",
         input_cost_per_1k=0.015,
         output_cost_per_1k=0.075,
-        cache_write_cost_per_1k=0.0375,  # 2.5x input cost
-        cache_read_cost_per_1k=0.003,    # 0.2x input cost
+        cache_write_cost_per_1k=0.01875,  # 1.25x input cost
+        cache_read_cost_per_1k=0.0015,    # 0.1x input cost
         max_tokens=4096,
         context_window=200000,
     ),
@@ -69,8 +71,8 @@ BEDROCK_MODELS: dict[str, ModelConfig] = {
         provider="bedrock",
         input_cost_per_1k=0.003,
         output_cost_per_1k=0.015,
-        cache_write_cost_per_1k=0.0075,  # 2.5x input cost
-        cache_read_cost_per_1k=0.0006,   # 0.2x input cost
+        cache_write_cost_per_1k=0.00375,  # 1.25x input cost
+        cache_read_cost_per_1k=0.0003,    # 0.1x input cost
         max_tokens=4096,
         context_window=200000,
     ),
@@ -79,8 +81,8 @@ BEDROCK_MODELS: dict[str, ModelConfig] = {
         provider="bedrock",
         input_cost_per_1k=0.00025,
         output_cost_per_1k=0.00125,
-        cache_write_cost_per_1k=0.000625,  # 2.5x input cost
-        cache_read_cost_per_1k=0.00005,    # 0.2x input cost
+        cache_write_cost_per_1k=0.0003125,  # 1.25x input cost
+        cache_read_cost_per_1k=0.000025,    # 0.1x input cost
         max_tokens=4096,
         context_window=200000,
     ),
@@ -276,6 +278,38 @@ def extract_usage_from_response(response: any) -> dict:
     return usage
 
 
+def supports_prompt_caching(model_id: str) -> bool:
+    """
+    Check if a model supports prompt caching.
+
+    Args:
+        model_id: Model ID (with or without regional prefix)
+
+    Returns:
+        True if model supports prompt caching, False otherwise
+    """
+    config = get_model_config(model_id)
+    if not config:
+        return False
+    return config.supports_caching
+
+
+def should_use_prompt_caching(model_id: str, enable_caching: bool = True) -> bool:
+    """
+    Determine if prompt caching should be used for a given model.
+
+    Args:
+        model_id: Model ID (with or without regional prefix)
+        enable_caching: Global flag to enable/disable caching (from settings)
+
+    Returns:
+        True if caching should be used, False otherwise
+    """
+    if not enable_caching:
+        return False
+    return supports_prompt_caching(model_id)
+
+
 def get_available_models() -> list[dict]:
     """Get list of available models."""
     return [
@@ -284,6 +318,23 @@ def get_available_models() -> list[dict]:
             "provider": config.provider,
             "max_tokens": config.max_tokens,
             "context_window": config.context_window,
+            "supports_caching": config.supports_caching,
         }
         for config in BEDROCK_MODELS.values()
     ]
+
+
+# Prompt caching supported models (as of 2025)
+# Reference: https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
+PROMPT_CACHING_SUPPORTED_MODELS = {
+    # Claude models (Generally Available)
+    "anthropic.claude-opus-4-5-20251101-v1:0",
+    "anthropic.claude-3-7-sonnet-20250219-v1:0",
+    "anthropic.claude-3-5-haiku-20241022-v1:0",
+    "anthropic.claude-3-5-sonnet-20241022-v2:0",  # Preview only
+    # Amazon Nova models (Generally Available)
+    "amazon.nova-micro-v1:0",
+    "amazon.nova-lite-v1:0",
+    "amazon.nova-pro-v1:0",
+    "amazon.nova-premier-v1:0",
+}

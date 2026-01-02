@@ -8,6 +8,8 @@ from langchain_core.prompts import ChatPromptTemplate
 import structlog
 
 from src.agents.state import AgentState, Evaluation
+from src.config import get_settings
+from src.config.models import should_use_prompt_caching
 
 logger = structlog.get_logger()
 
@@ -63,6 +65,7 @@ class Evaluator:
         user_input = state["user_input"]
         sub_agent_results = state["sub_agent_results"]
         messages = state["messages"]
+        settings = get_settings()
 
         # Format results for evaluation
         results_summary = self._format_results_summary(sub_agent_results)
@@ -70,15 +73,24 @@ class Evaluator:
         # Build conversation history (last 6 messages for brief context)
         conversation_history = self._format_conversation_history(messages[:-1], max_messages=6)
 
-        # Build prompt with caching enabled for system prompt
-        messages_list = [
-            SystemMessage(
-                content=[
-                    {"type": "text", "text": EVALUATOR_SYSTEM_PROMPT},
-                    {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
-                ]
-            ),
-        ]
+        # Check if we should use prompt caching
+        model_id = getattr(self.llm, 'model_id', settings.default_model_id)
+        use_caching = should_use_prompt_caching(model_id, settings.enable_prompt_caching)
+
+        # Build prompt with caching enabled for system prompt if supported
+        messages_list = []
+
+        if use_caching:
+            messages_list.append(
+                SystemMessage(
+                    content=[
+                        {"type": "text", "text": EVALUATOR_SYSTEM_PROMPT},
+                        {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
+                    ]
+                )
+            )
+        else:
+            messages_list.append(SystemMessage(content=EVALUATOR_SYSTEM_PROMPT))
 
         # Add conversation history if available
         if conversation_history:

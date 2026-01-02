@@ -7,6 +7,8 @@ from langchain_core.prompts import ChatPromptTemplate
 import structlog
 
 from src.agents.state import AgentState
+from src.config import get_settings
+from src.config.models import should_use_prompt_caching
 
 logger = structlog.get_logger()
 
@@ -57,6 +59,7 @@ class Synthesizer:
         sub_agent_results = state["sub_agent_results"]
         evaluation = state["intermediate_evaluation"]
         messages = state["messages"]
+        settings = get_settings()
 
         # Format context for synthesis
         context = self._build_context(sub_agent_results, evaluation)
@@ -64,26 +67,41 @@ class Synthesizer:
         # Build conversation history context (last 10 messages, excluding current)
         conversation_history = self._format_conversation_history(messages[:-1])
 
-        # Build prompt with caching enabled for system prompt AND conversation history
-        messages_list = [
-            SystemMessage(
-                content=[
-                    {"type": "text", "text": SYNTHESIZER_SYSTEM_PROMPT},
-                    {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
-                ]
-            ),
-        ]
+        # Check if we should use prompt caching
+        model_id = getattr(self.llm, 'model_id', settings.default_model_id)
+        use_caching = should_use_prompt_caching(model_id, settings.enable_prompt_caching)
 
-        # Add conversation history with caching if available
-        if conversation_history:
+        # Build prompt with caching enabled for system prompt AND conversation history if supported
+        messages_list = []
+
+        if use_caching:
             messages_list.append(
                 SystemMessage(
                     content=[
-                        {"type": "text", "text": f"## 会話履歴\n\n{conversation_history}"},
+                        {"type": "text", "text": SYNTHESIZER_SYSTEM_PROMPT},
                         {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
                     ]
                 )
             )
+
+            # Add conversation history with caching if available
+            if conversation_history:
+                messages_list.append(
+                    SystemMessage(
+                        content=[
+                            {"type": "text", "text": f"## 会話履歴\n\n{conversation_history}"},
+                            {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
+                        ]
+                    )
+                )
+        else:
+            messages_list.append(SystemMessage(content=SYNTHESIZER_SYSTEM_PROMPT))
+
+            # Add conversation history without caching if available
+            if conversation_history:
+                messages_list.append(
+                    SystemMessage(content=f"## 会話履歴\n\n{conversation_history}")
+                )
 
         # Add current request
         messages_list.append(
@@ -135,32 +153,48 @@ class Synthesizer:
         sub_agent_results = state["sub_agent_results"]
         evaluation = state["intermediate_evaluation"]
         messages = state["messages"]
+        settings = get_settings()
 
         context = self._build_context(sub_agent_results, evaluation)
 
         # Build conversation history context (last 10 messages, excluding current)
         conversation_history = self._format_conversation_history(messages[:-1])
 
-        # Build prompt with caching enabled for system prompt AND conversation history
-        messages_list = [
-            SystemMessage(
-                content=[
-                    {"type": "text", "text": SYNTHESIZER_SYSTEM_PROMPT},
-                    {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
-                ]
-            ),
-        ]
+        # Check if we should use prompt caching
+        model_id = getattr(self.llm, 'model_id', settings.default_model_id)
+        use_caching = should_use_prompt_caching(model_id, settings.enable_prompt_caching)
 
-        # Add conversation history with caching if available
-        if conversation_history:
+        # Build prompt with caching enabled for system prompt AND conversation history if supported
+        messages_list = []
+
+        if use_caching:
             messages_list.append(
                 SystemMessage(
                     content=[
-                        {"type": "text", "text": f"## 会話履歴\n\n{conversation_history}"},
+                        {"type": "text", "text": SYNTHESIZER_SYSTEM_PROMPT},
                         {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
                     ]
                 )
             )
+
+            # Add conversation history with caching if available
+            if conversation_history:
+                messages_list.append(
+                    SystemMessage(
+                        content=[
+                            {"type": "text", "text": f"## 会話履歴\n\n{conversation_history}"},
+                            {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
+                        ]
+                    )
+                )
+        else:
+            messages_list.append(SystemMessage(content=SYNTHESIZER_SYSTEM_PROMPT))
+
+            # Add conversation history without caching if available
+            if conversation_history:
+                messages_list.append(
+                    SystemMessage(content=f"## 会話履歴\n\n{conversation_history}")
+                )
 
         # Add current request
         messages_list.append(
