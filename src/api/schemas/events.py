@@ -1,6 +1,6 @@
 """SSE event schemas."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -32,7 +32,7 @@ class BaseEvent(BaseModel):
         description="Unique event identifier",
     )
     timestamp: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=lambda: datetime.now(timezone.utc),
         description="Event timestamp",
     )
 

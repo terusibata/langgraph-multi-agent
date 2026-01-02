@@ -1,6 +1,6 @@
 """Ad-hoc agent that is dynamically generated at runtime."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -120,7 +120,7 @@ class AdHocAgent:
         Returns:
             SubAgentResult with execution status and data
         """
-        started_at = datetime.utcnow()
+        started_at = datetime.now(timezone.utc)
         task_params = task_params or {}
 
         logger.info(
@@ -142,7 +142,7 @@ class AdHocAgent:
                 context,
             )
 
-            completed_at = datetime.utcnow()
+            completed_at = datetime.now(timezone.utc)
             duration_ms = int((completed_at - started_at).total_seconds() * 1000)
 
             status = "success" if result_data else "partial"
@@ -165,7 +165,7 @@ class AdHocAgent:
             )
 
         except Exception as e:
-            completed_at = datetime.utcnow()
+            completed_at = datetime.now(timezone.utc)
             duration_ms = int((completed_at - started_at).total_seconds() * 1000)
 
             logger.error(

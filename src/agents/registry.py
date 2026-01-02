@@ -1,8 +1,9 @@
 """Agent and Tool registry for dynamic registration and lookup."""
 
-from datetime import datetime
+from abc import ABC, abstractmethod
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar
 from uuid import uuid4
 import asyncio
 
@@ -16,7 +17,75 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 
-class ToolDefinition:
+# =============================================================================
+# Mixin for listener pattern (reduces code duplication)
+# =============================================================================
+
+
+class ListenerMixin:
+    """Mixin class for registry listener pattern."""
+
+    def __init__(self) -> None:
+        self._listeners: list[Callable] = []
+
+    def add_listener(self, listener: Callable) -> None:
+        """Add a listener for registry changes."""
+        self._listeners.append(listener)
+
+    def remove_listener(self, listener: Callable) -> None:
+        """Remove a listener."""
+        if listener in self._listeners:
+            self._listeners.remove(listener)
+
+    async def _notify_listeners(self, event: str, data: Any) -> None:
+        """Notify all listeners of a change."""
+        for listener in self._listeners:
+            try:
+                if asyncio.iscoroutinefunction(listener):
+                    await listener(event, data)
+                else:
+                    listener(event, data)
+            except Exception as e:
+                logger.error("listener_error", event=event, error=str(e))
+
+
+# =============================================================================
+# Definition base class (reduces code duplication)
+# =============================================================================
+
+
+class BaseDefinition(ABC):
+    """Base class for dynamic definitions."""
+
+    id: str
+    name: str
+    description: str
+    enabled: bool
+    metadata: dict
+    created_at: datetime
+    updated_at: datetime
+    created_by: str | None
+
+    def update(self, **kwargs) -> None:
+        """Update definition fields."""
+        for key, value in kwargs.items():
+            if hasattr(self, key) and value is not None:
+                setattr(self, key, value)
+        self.updated_at = datetime.now(timezone.utc)
+
+    @abstractmethod
+    def to_dict(self) -> dict:
+        """Convert to dictionary."""
+        pass
+
+    @classmethod
+    @abstractmethod
+    def from_dict(cls, data: dict) -> "BaseDefinition":
+        """Create from dictionary."""
+        pass
+
+
+class ToolDefinition(BaseDefinition):
     """
     Dynamic tool definition that can be created/modified at runtime.
     """
@@ -47,8 +116,8 @@ class ToolDefinition:
         self.timeout_seconds = timeout_seconds
         self.enabled = enabled
         self.metadata = metadata or {}
-        self.created_at = created_at or datetime.utcnow()
-        self.updated_at = updated_at or datetime.utcnow()
+        self.created_at = created_at or datetime.now(timezone.utc)
+        self.updated_at = updated_at or datetime.now(timezone.utc)
         self.created_by = created_by
 
     def to_dict(self) -> dict:
@@ -74,15 +143,8 @@ class ToolDefinition:
         """Create from dictionary."""
         return cls(**data)
 
-    def update(self, **kwargs) -> None:
-        """Update definition fields."""
-        for key, value in kwargs.items():
-            if hasattr(self, key) and value is not None:
-                setattr(self, key, value)
-        self.updated_at = datetime.utcnow()
 
-
-class AgentDefinition:
+class AgentDefinition(BaseDefinition):
     """
     Dynamic agent definition that can be created/modified at runtime.
     """
@@ -118,8 +180,8 @@ class AgentDefinition:
         self.priority = priority
         self.enabled = enabled
         self.metadata = metadata or {}
-        self.created_at = created_at or datetime.utcnow()
-        self.updated_at = updated_at or datetime.utcnow()
+        self.created_at = created_at or datetime.now(timezone.utc)
+        self.updated_at = updated_at or datetime.now(timezone.utc)
         self.created_by = created_by
 
     def to_dict(self) -> dict:
@@ -145,15 +207,8 @@ class AgentDefinition:
         """Create from dictionary."""
         return cls(**data)
 
-    def update(self, **kwargs) -> None:
-        """Update definition fields."""
-        for key, value in kwargs.items():
-            if hasattr(self, key) and value is not None:
-                setattr(self, key, value)
-        self.updated_at = datetime.utcnow()
 
-
-class ToolRegistry:
+class ToolRegistry(ListenerMixin):
     """
     Registry for tool instances and definitions.
 
@@ -163,15 +218,13 @@ class ToolRegistry:
     """
 
     def __init__(self):
+        super().__init__()  # Initialize listener mixin
         # Static tools (Python implementations)
         self._tools: dict[str, "ToolBase"] = {}
         self._config: dict[str, dict] = {}
 
         # Dynamic tool definitions
         self._definitions: dict[str, ToolDefinition] = {}
-
-        # Listeners for registry changes
-        self._listeners: list[Callable] = []
 
         # Lock for thread-safe operations
         self._lock = asyncio.Lock()
@@ -374,28 +427,8 @@ class ToolRegistry:
         names.update(self._definitions.keys())
         return sorted(list(names))
 
-    def add_listener(self, listener: Callable) -> None:
-        """Add a listener for registry changes."""
-        self._listeners.append(listener)
 
-    def remove_listener(self, listener: Callable) -> None:
-        """Remove a listener."""
-        if listener in self._listeners:
-            self._listeners.remove(listener)
-
-    async def _notify_listeners(self, event: str, data: Any) -> None:
-        """Notify all listeners of a change."""
-        for listener in self._listeners:
-            try:
-                if asyncio.iscoroutinefunction(listener):
-                    await listener(event, data)
-                else:
-                    listener(event, data)
-            except Exception as e:
-                logger.error("listener_error", event=event, error=str(e))
-
-
-class AgentRegistry:
+class AgentRegistry(ListenerMixin):
     """
     Registry for SubAgent instances and definitions.
 
@@ -405,15 +438,13 @@ class AgentRegistry:
     """
 
     def __init__(self):
+        super().__init__()  # Initialize listener mixin
         # Static agents (Python implementations)
         self._agents: dict[str, "SubAgentBase"] = {}
         self._config: dict[str, dict] = {}
 
         # Dynamic agent definitions
         self._definitions: dict[str, AgentDefinition] = {}
-
-        # Listeners for registry changes
-        self._listeners: list[Callable] = []
 
         # Lock for thread-safe operations
         self._lock = asyncio.Lock()
@@ -637,26 +668,6 @@ class AgentRegistry:
         names = set(self._agents.keys())
         names.update(self._definitions.keys())
         return sorted(list(names))
-
-    def add_listener(self, listener: Callable) -> None:
-        """Add a listener for registry changes."""
-        self._listeners.append(listener)
-
-    def remove_listener(self, listener: Callable) -> None:
-        """Remove a listener."""
-        if listener in self._listeners:
-            self._listeners.remove(listener)
-
-    async def _notify_listeners(self, event: str, data: Any) -> None:
-        """Notify all listeners of a change."""
-        for listener in self._listeners:
-            try:
-                if asyncio.iscoroutinefunction(listener):
-                    await listener(event, data)
-                else:
-                    listener(event, data)
-            except Exception as e:
-                logger.error("listener_error", event=event, error=str(e))
 
 
 # Global registry instances

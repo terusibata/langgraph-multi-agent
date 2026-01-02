@@ -4,7 +4,7 @@ import asyncio
 import importlib
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -63,7 +63,7 @@ class DynamicTool(ToolBase):
         Returns:
             ToolResult with execution status and data
         """
-        started_at = datetime.utcnow()
+        started_at = datetime.now(timezone.utc)
 
         try:
             # Validate parameters
@@ -89,7 +89,7 @@ class DynamicTool(ToolBase):
                 )
 
             # Calculate duration
-            duration = datetime.utcnow() - started_at
+            duration = datetime.now(timezone.utc) - started_at
             result.duration_ms = int(duration.total_seconds() * 1000)
 
             return result
@@ -101,7 +101,7 @@ class DynamicTool(ToolBase):
                 error=str(e),
                 request_id=context.request_id,
             )
-            duration = datetime.utcnow() - started_at
+            duration = datetime.now(timezone.utc) - started_at
             return ToolResult(
                 success=False,
                 error=str(e),

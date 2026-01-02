@@ -1,7 +1,7 @@
 """Base class for Tools."""
 
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -133,7 +133,7 @@ class ToolBase(ABC):
         Returns:
             ToolResult with execution status
         """
-        started_at = datetime.utcnow()
+        started_at = datetime.now(timezone.utc)
 
         # Validate token
         is_valid, error = self.validate_token(context)
@@ -147,7 +147,7 @@ class ToolBase(ABC):
         try:
             # Execute the tool
             result = await self.execute(params, context)
-            duration = datetime.utcnow() - started_at
+            duration = datetime.now(timezone.utc) - started_at
             result.duration_ms = int(duration.total_seconds() * 1000)
             return result
 
@@ -158,7 +158,7 @@ class ToolBase(ABC):
                 error=str(e),
                 request_id=context.request_id,
             )
-            duration = datetime.utcnow() - started_at
+            duration = datetime.now(timezone.utc) - started_at
             return ToolResult(
                 success=False,
                 error=str(e),

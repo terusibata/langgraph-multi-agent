@@ -1,6 +1,6 @@
 """Thread management service."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 from uuid import uuid4
 
@@ -24,8 +24,8 @@ class ThreadInfo:
         self.thread_id = thread_id
         self.tenant_id = tenant_id
         self.status = status
-        self.created_at = datetime.utcnow()
-        self.updated_at = datetime.utcnow()
+        self.created_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(timezone.utc)
         self.total_tokens_used = 0
         self.total_cost_usd = 0.0
         self.message_count = 0
@@ -163,7 +163,7 @@ class ThreadManager:
         thread.total_cost_usd += cost_usd
         thread.message_count += 1
         thread.context_tokens_used += input_tokens + output_tokens
-        thread.updated_at = datetime.utcnow()
+        thread.updated_at = datetime.now(timezone.utc)
 
         # Update status based on context usage
         usage_percent = (

@@ -1,6 +1,6 @@
 """Response schemas for API endpoints."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -44,7 +44,7 @@ class HealthResponse(BaseModel):
     )
     version: str = Field(..., description="Application version")
     timestamp: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=lambda: datetime.now(timezone.utc),
         description="Health check timestamp",
     )
     components: dict[str, dict] = Field(

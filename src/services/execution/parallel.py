@@ -1,7 +1,7 @@
 """Parallel execution service with ad-hoc agent support."""
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable, Any
 
 import structlog
@@ -310,7 +310,7 @@ class ParallelExecutor:
         timeout: int,
     ) -> SubAgentResult:
         """Execute a function with timeout handling."""
-        started_at = datetime.utcnow()
+        started_at = datetime.now(timezone.utc)
         try:
             result = await asyncio.wait_for(
                 func(state, task_params),
@@ -318,24 +318,24 @@ class ParallelExecutor:
             )
             return result
         except asyncio.TimeoutError:
-            duration = int((datetime.utcnow() - started_at).total_seconds() * 1000)
+            duration = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
             return SubAgentResult(
                 agent_name=agent_name,
                 status="failed",
                 error=f"Execution timeout after {timeout}s",
                 duration_ms=duration,
                 started_at=started_at,
-                completed_at=datetime.utcnow(),
+                completed_at=datetime.now(timezone.utc),
             )
         except Exception as e:
-            duration = int((datetime.utcnow() - started_at).total_seconds() * 1000)
+            duration = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
             return SubAgentResult(
                 agent_name=agent_name,
                 status="failed",
                 error=str(e),
                 duration_ms=duration,
                 started_at=started_at,
-                completed_at=datetime.utcnow(),
+                completed_at=datetime.now(timezone.utc),
             )
 
     def _get_task_params(self, state: AgentState, agent_name: str) -> dict:
