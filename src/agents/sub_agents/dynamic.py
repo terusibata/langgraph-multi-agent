@@ -1,6 +1,6 @@
 """Dynamic agent execution based on runtime definitions."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -109,7 +109,7 @@ class DynamicAgent(SubAgentBase):
         Returns:
             SubAgentResult with execution status and data
         """
-        started_at = datetime.utcnow()
+        started_at = datetime.now(timezone.utc)
 
         try:
             # Execute based on type
@@ -128,7 +128,7 @@ class DynamicAgent(SubAgentBase):
 
             # Set timing
             result.started_at = started_at
-            result.completed_at = datetime.utcnow()
+            result.completed_at = datetime.now(timezone.utc)
             result.duration_ms = int(
                 (result.completed_at - started_at).total_seconds() * 1000
             )
@@ -146,7 +146,7 @@ class DynamicAgent(SubAgentBase):
                 status="failed",
                 error=str(e),
                 started_at=started_at,
-                completed_at=datetime.utcnow(),
+                completed_at=datetime.now(timezone.utc),
             )
 
     async def _execute_llm(

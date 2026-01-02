@@ -1,6 +1,6 @@
 """Health check and metrics routes."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Response
@@ -75,7 +75,7 @@ async def health_check():
     return HealthResponse(
         status=overall_status,
         version=__version__,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         components=components,
     )
 

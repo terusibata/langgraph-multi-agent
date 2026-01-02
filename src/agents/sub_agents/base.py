@@ -1,7 +1,7 @@
 """Base class for SubAgents."""
 
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -100,7 +100,7 @@ class SubAgentBase(ABC):
         Returns:
             SubAgentResult with execution status and data
         """
-        started_at = datetime.utcnow()
+        started_at = datetime.now(timezone.utc)
         attempt = 0
         last_result: SubAgentResult | None = None
         search_variations: list[str] = []
@@ -129,7 +129,7 @@ class SubAgentBase(ABC):
                 result.retry_count = attempt - 1
                 result.search_variations = search_variations
                 result.started_at = started_at
-                result.completed_at = datetime.utcnow()
+                result.completed_at = datetime.now(timezone.utc)
                 result.duration_ms = int(
                     (result.completed_at - started_at).total_seconds() * 1000
                 )
@@ -154,7 +154,7 @@ class SubAgentBase(ABC):
                     retry_count=attempt - 1,
                     search_variations=search_variations,
                     started_at=started_at,
-                    completed_at=datetime.utcnow(),
+                    completed_at=datetime.now(timezone.utc),
                 )
 
                 if attempt >= self.retry_strategy.max_attempts:
@@ -168,7 +168,7 @@ class SubAgentBase(ABC):
         # Return last result if all retries exhausted
         if last_result:
             last_result.duration_ms = int(
-                (datetime.utcnow() - started_at).total_seconds() * 1000
+                (datetime.now(timezone.utc) - started_at).total_seconds() * 1000
             )
             return last_result
 
@@ -179,7 +179,7 @@ class SubAgentBase(ABC):
             retry_count=attempt,
             search_variations=search_variations,
             started_at=started_at,
-            completed_at=datetime.utcnow(),
+            completed_at=datetime.now(timezone.utc),
         )
 
     def should_retry(self, result: SubAgentResult) -> bool:
