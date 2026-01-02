@@ -16,6 +16,7 @@ from src.agents.state import (
     AdHocAgentSpec,
 )
 from src.agents.registry import get_agent_registry, get_tool_registry
+from src.config.models import should_use_prompt_caching
 
 logger = structlog.get_logger()
 
@@ -233,17 +234,28 @@ class Planner:
             template_agents=self.get_template_agents_description(),
         )
 
-        # Build prompt with prompt caching enabled on system message
+        # Check if we should use prompt caching based on model support
+        # Get model_id from LLM instance if available
+        model_id = getattr(self.llm, 'model_id', None)
+        use_caching = should_use_prompt_caching(model_id) if model_id else False
+
+        # Build prompt with prompt caching enabled on system message if supported
         # This caches the tool/agent descriptions which are static across requests
-        prompt = ChatPromptTemplate.from_messages([
-            SystemMessage(
-                content=[
-                    {"type": "text", "text": system_prompt_content},
-                    {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
-                ]
-            ),
-            HumanMessage(content=f"ユーザーのリクエスト: {user_input}"),
-        ])
+        if use_caching:
+            prompt = ChatPromptTemplate.from_messages([
+                SystemMessage(
+                    content=[
+                        {"type": "text", "text": system_prompt_content},
+                        {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
+                    ]
+                ),
+                HumanMessage(content=f"ユーザーのリクエスト: {user_input}"),
+            ])
+        else:
+            prompt = ChatPromptTemplate.from_messages([
+                SystemMessage(content=system_prompt_content),
+                HumanMessage(content=f"ユーザーのリクエスト: {user_input}"),
+            ])
 
         try:
             # Get LLM response
@@ -282,16 +294,26 @@ class Planner:
             available_agents=self.get_available_agents_description()
         )
 
-        # Build prompt with prompt caching enabled
-        prompt = ChatPromptTemplate.from_messages([
-            SystemMessage(
-                content=[
-                    {"type": "text", "text": system_prompt_content},
-                    {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
-                ]
-            ),
-            HumanMessage(content=f"ユーザーの質問: {user_input}"),
-        ])
+        # Check if we should use prompt caching based on model support
+        model_id = getattr(self.llm, 'model_id', None)
+        use_caching = should_use_prompt_caching(model_id) if model_id else False
+
+        # Build prompt with prompt caching enabled if supported
+        if use_caching:
+            prompt = ChatPromptTemplate.from_messages([
+                SystemMessage(
+                    content=[
+                        {"type": "text", "text": system_prompt_content},
+                        {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
+                    ]
+                ),
+                HumanMessage(content=f"ユーザーの質問: {user_input}"),
+            ])
+        else:
+            prompt = ChatPromptTemplate.from_messages([
+                SystemMessage(content=system_prompt_content),
+                HumanMessage(content=f"ユーザーの質問: {user_input}"),
+            ])
 
         try:
             # Get LLM response
