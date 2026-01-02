@@ -541,9 +541,11 @@ langgraph-multi-agent-backend/
 | `DATABASE_URL` | ✓ | - | PostgreSQL接続URL |
 | `REDIS_URL` | ✓ | - | Redis接続URL |
 | `AWS_REGION` | ✓ | `us-east-1` | AWSリージョン |
+| `AWS_ACCESS_KEY_ID` | ✓ | - | AWS認証用アクセスキーID |
+| `AWS_SECRET_ACCESS_KEY` | ✓ | - | AWS認証用シークレットアクセスキー |
 | `ACCESS_KEY_SECRET` | ✓ | - | アクセスキー署名用 |
-| `DEFAULT_MODEL_ID` | - | `claude-3-5-sonnet` | MainAgentデフォルト |
-| `SUB_AGENT_MODEL_ID` | - | `claude-3-5-haiku` | SubAgentモデル |
+| `DEFAULT_MODEL_ID` | - | `anthropic.claude-3-5-sonnet-20241022-v2:0` | MainAgentデフォルト |
+| `SUB_AGENT_MODEL_ID` | - | `anthropic.claude-3-5-haiku-20241022-v1:0` | SubAgentモデル |
 | `CONTEXT_WARNING_THRESHOLD` | - | `80` | 警告閾値（%） |
 | `CONTEXT_LOCK_THRESHOLD` | - | `95` | ロック閾値（%） |
 
