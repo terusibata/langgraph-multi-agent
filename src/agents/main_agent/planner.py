@@ -226,12 +226,22 @@ class Planner:
         """Create a plan with dynamic ad-hoc agent generation."""
         user_input = state["user_input"]
 
-        # Build prompt with tool and agent information
+        # Build system prompt with caching for better performance
+        # The tool and agent descriptions are cached since they change infrequently
+        system_prompt_content = TOOL_ANALYSIS_PROMPT.format(
+            available_tools=self.get_available_tools_description(),
+            template_agents=self.get_template_agents_description(),
+        )
+
+        # Build prompt with prompt caching enabled on system message
+        # This caches the tool/agent descriptions which are static across requests
         prompt = ChatPromptTemplate.from_messages([
-            SystemMessage(content=TOOL_ANALYSIS_PROMPT.format(
-                available_tools=self.get_available_tools_description(),
-                template_agents=self.get_template_agents_description(),
-            )),
+            SystemMessage(
+                content=[
+                    {"type": "text", "text": system_prompt_content},
+                    {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
+                ]
+            ),
             HumanMessage(content=f"ユーザーのリクエスト: {user_input}"),
         ])
 
@@ -267,11 +277,19 @@ class Planner:
         """Create a simple plan using pre-defined agents only."""
         user_input = state["user_input"]
 
-        # Build prompt
+        # Build system prompt with caching
+        system_prompt_content = SIMPLE_PLANNER_PROMPT.format(
+            available_agents=self.get_available_agents_description()
+        )
+
+        # Build prompt with prompt caching enabled
         prompt = ChatPromptTemplate.from_messages([
-            SystemMessage(content=SIMPLE_PLANNER_PROMPT.format(
-                available_agents=self.get_available_agents_description()
-            )),
+            SystemMessage(
+                content=[
+                    {"type": "text", "text": system_prompt_content},
+                    {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
+                ]
+            ),
             HumanMessage(content=f"ユーザーの質問: {user_input}"),
         ])
 

@@ -66,8 +66,14 @@ class Evaluator:
         # Format results for evaluation
         results_summary = self._format_results_summary(sub_agent_results)
 
+        # Build prompt with caching enabled for system prompt
         prompt = ChatPromptTemplate.from_messages([
-            SystemMessage(content=EVALUATOR_SYSTEM_PROMPT),
+            SystemMessage(
+                content=[
+                    {"type": "text", "text": EVALUATOR_SYSTEM_PROMPT},
+                    {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
+                ]
+            ),
             HumanMessage(content=f"""
 ユーザーの質問: {user_input}
 

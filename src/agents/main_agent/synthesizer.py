@@ -60,8 +60,14 @@ class Synthesizer:
         # Format context for synthesis
         context = self._build_context(sub_agent_results, evaluation)
 
+        # Build prompt with caching enabled for system prompt
         prompt = ChatPromptTemplate.from_messages([
-            SystemMessage(content=SYNTHESIZER_SYSTEM_PROMPT),
+            SystemMessage(
+                content=[
+                    {"type": "text", "text": SYNTHESIZER_SYSTEM_PROMPT},
+                    {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
+                ]
+            ),
             HumanMessage(content=f"""
 ユーザーの質問: {user_input}
 
@@ -110,8 +116,14 @@ class Synthesizer:
 
         context = self._build_context(sub_agent_results, evaluation)
 
+        # Build prompt with caching enabled for system prompt
         prompt = ChatPromptTemplate.from_messages([
-            SystemMessage(content=SYNTHESIZER_SYSTEM_PROMPT),
+            SystemMessage(
+                content=[
+                    {"type": "text", "text": SYNTHESIZER_SYSTEM_PROMPT},
+                    {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
+                ]
+            ),
             HumanMessage(content=f"""
 ユーザーの質問: {user_input}
 
