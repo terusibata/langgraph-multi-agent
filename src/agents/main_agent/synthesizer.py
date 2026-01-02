@@ -7,7 +7,6 @@ from langchain_core.prompts import ChatPromptTemplate
 import structlog
 
 from src.agents.state import AgentState
-from src.config import get_settings
 from src.config.models import should_use_prompt_caching
 
 logger = structlog.get_logger()
@@ -59,7 +58,6 @@ class Synthesizer:
         sub_agent_results = state["sub_agent_results"]
         evaluation = state["intermediate_evaluation"]
         messages = state["messages"]
-        settings = get_settings()
 
         # Format context for synthesis
         context = self._build_context(sub_agent_results, evaluation)
@@ -67,9 +65,9 @@ class Synthesizer:
         # Build conversation history context (last 10 messages, excluding current)
         conversation_history = self._format_conversation_history(messages[:-1])
 
-        # Check if we should use prompt caching
-        model_id = getattr(self.llm, 'model_id', settings.default_model_id)
-        use_caching = should_use_prompt_caching(model_id, settings.enable_prompt_caching)
+        # Check if we should use prompt caching based on model support
+        model_id = getattr(self.llm, 'model_id', None)
+        use_caching = should_use_prompt_caching(model_id) if model_id else False
 
         # Build prompt with caching enabled for system prompt AND conversation history if supported
         messages_list = []
@@ -153,16 +151,15 @@ class Synthesizer:
         sub_agent_results = state["sub_agent_results"]
         evaluation = state["intermediate_evaluation"]
         messages = state["messages"]
-        settings = get_settings()
 
         context = self._build_context(sub_agent_results, evaluation)
 
         # Build conversation history context (last 10 messages, excluding current)
         conversation_history = self._format_conversation_history(messages[:-1])
 
-        # Check if we should use prompt caching
-        model_id = getattr(self.llm, 'model_id', settings.default_model_id)
-        use_caching = should_use_prompt_caching(model_id, settings.enable_prompt_caching)
+        # Check if we should use prompt caching based on model support
+        model_id = getattr(self.llm, 'model_id', None)
+        use_caching = should_use_prompt_caching(model_id) if model_id else False
 
         # Build prompt with caching enabled for system prompt AND conversation history if supported
         messages_list = []

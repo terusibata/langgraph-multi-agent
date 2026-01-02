@@ -8,7 +8,6 @@ from langchain_core.prompts import ChatPromptTemplate
 import structlog
 
 from src.agents.state import AgentState, Evaluation
-from src.config import get_settings
 from src.config.models import should_use_prompt_caching
 
 logger = structlog.get_logger()
@@ -65,7 +64,6 @@ class Evaluator:
         user_input = state["user_input"]
         sub_agent_results = state["sub_agent_results"]
         messages = state["messages"]
-        settings = get_settings()
 
         # Format results for evaluation
         results_summary = self._format_results_summary(sub_agent_results)
@@ -73,9 +71,9 @@ class Evaluator:
         # Build conversation history (last 6 messages for brief context)
         conversation_history = self._format_conversation_history(messages[:-1], max_messages=6)
 
-        # Check if we should use prompt caching
-        model_id = getattr(self.llm, 'model_id', settings.default_model_id)
-        use_caching = should_use_prompt_caching(model_id, settings.enable_prompt_caching)
+        # Check if we should use prompt caching based on model support
+        model_id = getattr(self.llm, 'model_id', None)
+        use_caching = should_use_prompt_caching(model_id) if model_id else False
 
         # Build prompt with caching enabled for system prompt if supported
         messages_list = []

@@ -130,10 +130,6 @@ class Settings(BaseSettings):
         default=True,
         description="Enable request/response logging",
     )
-    enable_prompt_caching: bool = Field(
-        default=True,
-        description="Enable prompt caching for supported models",
-    )
 
     @property
     def context_warning_tokens(self) -> int:

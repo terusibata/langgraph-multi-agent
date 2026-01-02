@@ -35,6 +35,7 @@ BEDROCK_MODELS: dict[str, ModelConfig] = {
         cache_read_cost_per_1k=0.0003,    # 0.1x input cost
         max_tokens=8192,
         context_window=200000,
+        supports_caching=True,  # Supports prompt caching (GA)
     ),
     "anthropic.claude-3-5-sonnet-20241022-v2:0": ModelConfig(
         model_id="anthropic.claude-3-5-sonnet-20241022-v2:0",
@@ -45,6 +46,7 @@ BEDROCK_MODELS: dict[str, ModelConfig] = {
         cache_read_cost_per_1k=0.0003,    # 0.1x input cost
         max_tokens=8192,
         context_window=200000,
+        supports_caching=True,  # Supports prompt caching (Preview only)
     ),
     "anthropic.claude-3-5-haiku-20241022-v1:0": ModelConfig(
         model_id="anthropic.claude-3-5-haiku-20241022-v1:0",
@@ -55,36 +57,40 @@ BEDROCK_MODELS: dict[str, ModelConfig] = {
         cache_read_cost_per_1k=0.00008,   # 0.1x input cost
         max_tokens=8192,
         context_window=200000,
+        supports_caching=True,  # Supports prompt caching (GA)
     ),
     "anthropic.claude-3-opus-20240229-v1:0": ModelConfig(
         model_id="anthropic.claude-3-opus-20240229-v1:0",
         provider="bedrock",
         input_cost_per_1k=0.015,
         output_cost_per_1k=0.075,
-        cache_write_cost_per_1k=0.01875,  # 1.25x input cost
-        cache_read_cost_per_1k=0.0015,    # 0.1x input cost
+        cache_write_cost_per_1k=0.01875,  # 1.25x input cost (not used)
+        cache_read_cost_per_1k=0.0015,    # 0.1x input cost (not used)
         max_tokens=4096,
         context_window=200000,
+        supports_caching=False,  # Does NOT support prompt caching
     ),
     "anthropic.claude-3-sonnet-20240229-v1:0": ModelConfig(
         model_id="anthropic.claude-3-sonnet-20240229-v1:0",
         provider="bedrock",
         input_cost_per_1k=0.003,
         output_cost_per_1k=0.015,
-        cache_write_cost_per_1k=0.00375,  # 1.25x input cost
-        cache_read_cost_per_1k=0.0003,    # 0.1x input cost
+        cache_write_cost_per_1k=0.00375,  # 1.25x input cost (not used)
+        cache_read_cost_per_1k=0.0003,    # 0.1x input cost (not used)
         max_tokens=4096,
         context_window=200000,
+        supports_caching=False,  # Does NOT support prompt caching
     ),
     "anthropic.claude-3-haiku-20240307-v1:0": ModelConfig(
         model_id="anthropic.claude-3-haiku-20240307-v1:0",
         provider="bedrock",
         input_cost_per_1k=0.00025,
         output_cost_per_1k=0.00125,
-        cache_write_cost_per_1k=0.0003125,  # 1.25x input cost
-        cache_read_cost_per_1k=0.000025,    # 0.1x input cost
+        cache_write_cost_per_1k=0.0003125,  # 1.25x input cost (not used)
+        cache_read_cost_per_1k=0.000025,    # 0.1x input cost (not used)
         max_tokens=4096,
         context_window=200000,
+        supports_caching=False,  # Does NOT support prompt caching
     ),
 }
 
@@ -294,19 +300,18 @@ def supports_prompt_caching(model_id: str) -> bool:
     return config.supports_caching
 
 
-def should_use_prompt_caching(model_id: str, enable_caching: bool = True) -> bool:
+def should_use_prompt_caching(model_id: str) -> bool:
     """
     Determine if prompt caching should be used for a given model.
 
+    This is an alias for supports_prompt_caching() for backward compatibility.
+
     Args:
         model_id: Model ID (with or without regional prefix)
-        enable_caching: Global flag to enable/disable caching (from settings)
 
     Returns:
         True if caching should be used, False otherwise
     """
-    if not enable_caching:
-        return False
     return supports_prompt_caching(model_id)
 
 
@@ -322,19 +327,3 @@ def get_available_models() -> list[dict]:
         }
         for config in BEDROCK_MODELS.values()
     ]
-
-
-# Prompt caching supported models (as of 2025)
-# Reference: https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
-PROMPT_CACHING_SUPPORTED_MODELS = {
-    # Claude models (Generally Available)
-    "anthropic.claude-opus-4-5-20251101-v1:0",
-    "anthropic.claude-3-7-sonnet-20250219-v1:0",
-    "anthropic.claude-3-5-haiku-20241022-v1:0",
-    "anthropic.claude-3-5-sonnet-20241022-v2:0",  # Preview only
-    # Amazon Nova models (Generally Available)
-    "amazon.nova-micro-v1:0",
-    "amazon.nova-lite-v1:0",
-    "amazon.nova-pro-v1:0",
-    "amazon.nova-premier-v1:0",
-}

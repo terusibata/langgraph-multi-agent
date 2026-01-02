@@ -16,7 +16,6 @@ from src.agents.state import (
     AdHocAgentSpec,
 )
 from src.agents.registry import get_agent_registry, get_tool_registry
-from src.config import get_settings
 from src.config.models import should_use_prompt_caching
 
 logger = structlog.get_logger()
@@ -227,7 +226,6 @@ class Planner:
     async def _create_dynamic_plan(self, state: AgentState) -> ExecutionPlan:
         """Create a plan with dynamic ad-hoc agent generation."""
         user_input = state["user_input"]
-        settings = get_settings()
 
         # Build system prompt with caching for better performance
         # The tool and agent descriptions are cached since they change infrequently
@@ -236,10 +234,10 @@ class Planner:
             template_agents=self.get_template_agents_description(),
         )
 
-        # Check if we should use prompt caching
+        # Check if we should use prompt caching based on model support
         # Get model_id from LLM instance if available
-        model_id = getattr(self.llm, 'model_id', settings.default_model_id)
-        use_caching = should_use_prompt_caching(model_id, settings.enable_prompt_caching)
+        model_id = getattr(self.llm, 'model_id', None)
+        use_caching = should_use_prompt_caching(model_id) if model_id else False
 
         # Build prompt with prompt caching enabled on system message if supported
         # This caches the tool/agent descriptions which are static across requests
@@ -290,16 +288,15 @@ class Planner:
     async def _create_simple_plan(self, state: AgentState) -> ExecutionPlan:
         """Create a simple plan using pre-defined agents only."""
         user_input = state["user_input"]
-        settings = get_settings()
 
         # Build system prompt with caching
         system_prompt_content = SIMPLE_PLANNER_PROMPT.format(
             available_agents=self.get_available_agents_description()
         )
 
-        # Check if we should use prompt caching
-        model_id = getattr(self.llm, 'model_id', settings.default_model_id)
-        use_caching = should_use_prompt_caching(model_id, settings.enable_prompt_caching)
+        # Check if we should use prompt caching based on model support
+        model_id = getattr(self.llm, 'model_id', None)
+        use_caching = should_use_prompt_caching(model_id) if model_id else False
 
         # Build prompt with prompt caching enabled if supported
         if use_caching:
