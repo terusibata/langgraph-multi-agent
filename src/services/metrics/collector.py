@@ -114,18 +114,53 @@ class MetricsCollector:
         input_tokens: int,
         output_tokens: int,
         cost_usd: float,
+        cache_creation_tokens: int = 0,
+        cache_read_tokens: int = 0,
     ) -> None:
-        """Record token usage."""
+        """
+        Record token usage with prompt caching support.
+
+        Args:
+            tenant_id: Tenant ID
+            model_id: Model ID
+            input_tokens: Total input tokens
+            output_tokens: Output tokens
+            cost_usd: Total cost in USD
+            cache_creation_tokens: Tokens written to cache (optional)
+            cache_read_tokens: Tokens read from cache (optional)
+        """
+        # Record normal input tokens (excluding cached)
+        normal_input = input_tokens - cache_creation_tokens - cache_read_tokens
         self.tokens_used.labels(
             tenant_id=tenant_id,
             model_id=model_id,
             type="input",
-        ).inc(input_tokens)
+        ).inc(normal_input)
+
+        # Record output tokens
         self.tokens_used.labels(
             tenant_id=tenant_id,
             model_id=model_id,
             type="output",
         ).inc(output_tokens)
+
+        # Record cache creation tokens
+        if cache_creation_tokens > 0:
+            self.tokens_used.labels(
+                tenant_id=tenant_id,
+                model_id=model_id,
+                type="cache_creation",
+            ).inc(cache_creation_tokens)
+
+        # Record cache read tokens
+        if cache_read_tokens > 0:
+            self.tokens_used.labels(
+                tenant_id=tenant_id,
+                model_id=model_id,
+                type="cache_read",
+            ).inc(cache_read_tokens)
+
+        # Record cost
         self.cost_usd.labels(
             tenant_id=tenant_id,
             model_id=model_id,

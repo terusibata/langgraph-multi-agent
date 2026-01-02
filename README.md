@@ -16,6 +16,7 @@ Next.jsアプリケーションからのみアクセスされ、LangGraphによ�
 - **トークン管理**: 二層トークン構造（アクセスキー + サービストークン）
 - **動的エージェント/ツール管理**: API経由でエージェントやツールを動的に追加・変更・削除
 - **OpenAPIサポート**: OpenAPI仕様からツールを自動生成・登録
+- **プロンプトキャッシュ**: AWS Bedrock Prompt Cachingによるコスト削減とレイテンシ改善
 
 ### アーキテクチャ
 
@@ -541,11 +542,98 @@ langgraph-multi-agent-backend/
 | `DATABASE_URL` | ✓ | - | PostgreSQL接続URL |
 | `REDIS_URL` | ✓ | - | Redis接続URL |
 | `AWS_REGION` | ✓ | `us-east-1` | AWSリージョン |
+| `AWS_ACCESS_KEY_ID` | ✓ | - | AWS認証用アクセスキーID |
+| `AWS_SECRET_ACCESS_KEY` | ✓ | - | AWS認証用シークレットアクセスキー |
 | `ACCESS_KEY_SECRET` | ✓ | - | アクセスキー署名用 |
-| `DEFAULT_MODEL_ID` | - | `claude-3-5-sonnet` | MainAgentデフォルト |
-| `SUB_AGENT_MODEL_ID` | - | `claude-3-5-haiku` | SubAgentモデル |
+| `DEFAULT_MODEL_ID` | - | `anthropic.claude-3-5-sonnet-20241022-v2:0` | MainAgentデフォルト |
+| `SUB_AGENT_MODEL_ID` | - | `anthropic.claude-3-5-haiku-20241022-v1:0` | SubAgentモデル |
 | `CONTEXT_WARNING_THRESHOLD` | - | `80` | 警告閾値（%） |
 | `CONTEXT_LOCK_THRESHOLD` | - | `95` | ロック閾値（%） |
+
+## プロンプトキャッシュ
+
+このシステムは、AWS Bedrock Prompt Cachingを活用してコストとレイテンシを最適化しています。
+
+### キャッシュ対象
+
+以下のコンポーネントでプロンプトがキャッシュされます：
+
+1. **Planner（実行計画策定）**
+   - システムプロンプト + 利用可能なツールとテンプレートエージェントのリスト
+   - 全リクエストで最初に実行されるため、最も効果が高い
+   - ツール定義が変更されない限り、ほぼ100%のキャッシュヒット率
+
+2. **Evaluator（中間評価）**
+   - システムプロンプト: 固定の評価基準プロンプト
+   - 会話履歴: 最新6メッセージ（文脈考慮のため）
+   - SubAgent実行後の評価で毎回使用
+
+3. **Synthesizer（最終応答生成）**
+   - システムプロンプト: 固定の応答生成ガイドライン
+   - 会話履歴: 最新10メッセージ（マルチターン対話で重要）
+   - 最終回答の生成時に使用（通常とストリーミング両方）
+   - 会話が続くほど、キャッシュ効果が大きくなる
+
+### 効果
+
+- **コスト削減**: キャッシュヒット時、入力トークンコストが**90%削減**
+- **レイテンシ改善**: キャッシュされたプロンプトの処理が高速化
+- **キャッシュTTL**: 5分間（ヒットするたびにリセット）
+- **最小サイズ**: 1024トークン以上のプロンプトで効果を発揮
+
+### 実装詳細
+
+AWS Bedrockの`cache_control`機能を使用し、SystemMessageに以下の構造でキャッシュポイントを設定：
+
+```python
+SystemMessage(
+    content=[
+        {"type": "text", "text": "システムプロンプト内容"},
+        {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
+    ]
+)
+```
+
+クロスリージョン推論プロファイル（`us.anthropic.*`など）でも正常に動作します。
+
+### コスト計算
+
+正確なコスト計算のため、以下のトークン種別を区別して記録・計算します：
+
+1. **通常入力トークン**: 標準価格
+2. **キャッシュ作成トークン** (cache_creation): 標準価格の約2.5倍
+3. **キャッシュ読み取りトークン** (cache_read): 標準価格の約20% (10-20%)
+4. **出力トークン**: 標準価格
+
+**計算式**:
+```
+total_cost = (normal_input_tokens × input_cost)
+           + (cache_creation_tokens × cache_write_cost)
+           + (cache_read_tokens × cache_read_cost)
+           + (output_tokens × output_cost)
+
+# where:
+normal_input_tokens = total_input_tokens - cache_creation - cache_read
+```
+
+すべてのトークン数とコストはPrometheusメトリクスで記録され、監視可能です。
+
+## 会話履歴とマルチターン対話
+
+このシステムはスレッド管理により会話履歴を保持し、マルチターン対話をサポートします。
+
+### 会話履歴の活用
+
+- **Synthesizer**: 最新10メッセージを参照し、文脈を考慮した回答を生成
+- **Evaluator**: 最新6メッセージを参照し、会話の流れに沿った評価を実施
+- **キャッシュ最適化**: 会話履歴もキャッシュされ、長い対話ほどコスト効率が向上
+
+### スレッド管理
+
+各スレッドでトークン使用量を追跡し、コンテキストウィンドウの限界に達する前に警告：
+
+- **警告閾値**: 80% でwarning状態
+- **ロック閾値**: 95% でlocked状態（新規メッセージ拒否）
 
 ## ライセンス
 
