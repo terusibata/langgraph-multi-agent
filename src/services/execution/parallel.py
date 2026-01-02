@@ -1,4 +1,4 @@
-"""Parallel execution service."""
+"""Parallel execution service with ad-hoc agent support."""
 
 import asyncio
 from datetime import datetime
@@ -6,9 +6,10 @@ from typing import Callable, Any
 
 import structlog
 
-from src.agents.state import AgentState, SubAgentResult
+from src.agents.state import AgentState, SubAgentResult, Task
 from src.agents.registry import get_agent_registry
 from src.agents.sub_agents.dynamic import DynamicAgentFactory
+from src.agents.sub_agents.adhoc import AdHocAgentFactory
 from src.config import get_settings
 
 logger = structlog.get_logger()
@@ -18,7 +19,8 @@ class ParallelExecutor:
     """
     Service for executing SubAgents in parallel.
 
-    Manages concurrent execution of multiple agents with timeout handling.
+    Supports both pre-defined agents (static/dynamic) and ad-hoc agents
+    generated at runtime by the Planner.
     """
 
     def __init__(self, timeout_seconds: int | None = None):
@@ -38,7 +40,9 @@ class ParallelExecutor:
         timeout_seconds: int | None = None,
     ) -> dict[str, SubAgentResult]:
         """
-        Execute multiple agents in parallel.
+        Execute multiple agents in parallel by name.
+
+        This method is for backwards compatibility with the simple mode.
 
         Args:
             state: Current agent state
@@ -93,8 +97,98 @@ class ParallelExecutor:
                     session_id=state["session_id"],
                 )
 
-        # Wait for all tasks with overall timeout
+        return await self._wait_for_tasks(tasks, agent_names, timeout, state)
+
+    async def execute_tasks(
+        self,
+        state: AgentState,
+        task_list: list[Task],
+        timeout_seconds: int | None = None,
+    ) -> dict[str, SubAgentResult]:
+        """
+        Execute multiple tasks in parallel.
+
+        This method supports both pre-defined and ad-hoc agents.
+
+        Args:
+            state: Current agent state
+            task_list: List of Task objects to execute
+            timeout_seconds: Optional timeout override
+
+        Returns:
+            Dictionary mapping agent names to results
+        """
+        timeout = timeout_seconds or self.default_timeout
+        registry = get_agent_registry()
+
+        logger.info(
+            "parallel_task_execution_start",
+            session_id=state["session_id"],
+            num_tasks=len(task_list),
+            adhoc_count=sum(1 for t in task_list if t.is_adhoc),
+            timeout=timeout,
+        )
+
+        # Create async tasks for each task
+        async_tasks = {}
+
+        for task in task_list:
+            agent_name = task.effective_agent_name
+
+            if task.is_adhoc:
+                # Create ad-hoc agent from specification
+                agent = AdHocAgentFactory.create(task.adhoc_spec)
+                logger.info(
+                    "created_adhoc_agent",
+                    agent_name=agent_name,
+                    purpose=task.adhoc_spec.purpose,
+                    tools=task.adhoc_spec.tools,
+                    session_id=state["session_id"],
+                )
+            else:
+                # Get pre-defined agent (static or dynamic)
+                agent = registry.get(task.agent_name)
+
+                if not agent:
+                    definition = registry.get_definition(task.agent_name)
+                    if definition:
+                        agent = DynamicAgentFactory.create(definition)
+
+            if agent:
+                async_tasks[agent_name] = asyncio.create_task(
+                    self._execute_with_timeout(
+                        agent.execute_with_retry,
+                        state,
+                        task.parameters,
+                        agent_name,
+                        timeout,
+                    )
+                )
+            else:
+                logger.warning(
+                    "agent_not_found_for_task",
+                    task_id=task.id,
+                    agent_name=agent_name,
+                    is_adhoc=task.is_adhoc,
+                    session_id=state["session_id"],
+                )
+
+        agent_names = [t.effective_agent_name for t in task_list]
+        return await self._wait_for_tasks(async_tasks, agent_names, timeout, state)
+
+    async def _wait_for_tasks(
+        self,
+        tasks: dict[str, asyncio.Task],
+        agent_names: list[str],
+        timeout: int,
+        state: AgentState,
+    ) -> dict[str, SubAgentResult]:
+        """Wait for all tasks to complete and collect results."""
         results = {}
+
+        if not tasks:
+            return results
+
         try:
             done, pending = await asyncio.wait(
                 tasks.values(),
@@ -158,7 +252,7 @@ class ParallelExecutor:
         timeout_seconds: int | None = None,
     ) -> SubAgentResult:
         """
-        Execute a single agent.
+        Execute a single agent by name.
 
         Args:
             state: Current agent state
@@ -177,6 +271,34 @@ class ParallelExecutor:
             agent_name=agent_name,
             status="failed",
             error="Agent not found",
+        ))
+
+    async def execute_single_task(
+        self,
+        state: AgentState,
+        task: Task,
+        timeout_seconds: int | None = None,
+    ) -> SubAgentResult:
+        """
+        Execute a single task.
+
+        Args:
+            state: Current agent state
+            task: Task to execute
+            timeout_seconds: Optional timeout
+
+        Returns:
+            SubAgentResult
+        """
+        results = await self.execute_tasks(
+            state,
+            [task],
+            timeout_seconds,
+        )
+        return results.get(task.effective_agent_name, SubAgentResult(
+            agent_name=task.effective_agent_name,
+            status="failed",
+            error="Task execution failed",
         ))
 
     async def _execute_with_timeout(
@@ -220,6 +342,52 @@ class ParallelExecutor:
         """Get task parameters for an agent from the execution plan."""
         plan = state["execution_plan"]
         for task in plan.tasks:
-            if task.agent_name == agent_name:
+            if task.effective_agent_name == agent_name:
                 return task.parameters
         return {"query": state["user_input"]}
+
+
+def get_tasks_for_group(
+    plan,
+    group_id: str,
+) -> list[Task]:
+    """Get all tasks belonging to a parallel group."""
+    for group in plan.parallel_groups:
+        if group.group_id == group_id:
+            return [
+                task for task in plan.tasks
+                if task.id in group.task_ids
+            ]
+    return []
+
+
+def get_next_tasks_to_execute(
+    plan,
+    completed_agents: set[str],
+) -> list[Task]:
+    """
+    Get the next batch of tasks to execute.
+
+    This considers the execution order and returns either:
+    - All tasks in the next parallel group, or
+    - The next individual task
+    """
+    for item in plan.execution_order:
+        # Check if it's a group
+        for group in plan.parallel_groups:
+            if group.group_id == item:
+                group_tasks = [
+                    task for task in plan.tasks
+                    if task.id in group.task_ids
+                    and task.effective_agent_name not in completed_agents
+                ]
+                if group_tasks:
+                    return group_tasks
+                break
+        else:
+            # It's an individual task ID
+            for task in plan.tasks:
+                if task.id == item and task.effective_agent_name not in completed_agents:
+                    return [task]
+
+    return []

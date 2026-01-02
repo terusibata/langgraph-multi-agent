@@ -53,15 +53,58 @@ class FileInput(BaseModel):
     size_bytes: int
 
 
+class AdHocAgentSpec(BaseModel):
+    """
+    Specification for an ad-hoc agent generated at runtime.
+
+    Ad-hoc agents are created dynamically by the Planner based on
+    the available tools and the task requirements.
+    """
+
+    id: str = Field(default_factory=lambda: f"adhoc_{uuid4().hex[:8]}")
+    name: str = Field(..., description="Generated name for this ad-hoc agent")
+    purpose: str = Field(..., description="The purpose/goal of this agent")
+    tools: list[str] = Field(default_factory=list, description="Tool names to use")
+    system_prompt: str = Field(default="", description="Auto-generated system prompt")
+    expected_output: str = Field(
+        default="",
+        description="Description of expected output format",
+    )
+    reasoning: str = Field(
+        default="",
+        description="Why this combination of tools was chosen",
+    )
+
+
 class Task(BaseModel):
     """A task in the execution plan."""
 
     id: str = Field(default_factory=lambda: f"task_{uuid4().hex[:8]}")
-    agent_name: str
+    # For pre-defined agents (static or template)
+    agent_name: str | None = Field(default=None, description="Name of pre-defined agent")
+    # For ad-hoc agents generated at runtime
+    adhoc_spec: AdHocAgentSpec | None = Field(
+        default=None,
+        description="Specification for ad-hoc agent",
+    )
     priority: int = Field(default=0)
     depends_on: list[str] = Field(default_factory=list)
     parameters: dict = Field(default_factory=dict)
     status: Literal["pending", "running", "completed", "failed"] = "pending"
+
+    @property
+    def effective_agent_name(self) -> str:
+        """Get the effective agent name (pre-defined or ad-hoc)."""
+        if self.agent_name:
+            return self.agent_name
+        if self.adhoc_spec:
+            return self.adhoc_spec.name
+        return "unknown"
+
+    @property
+    def is_adhoc(self) -> bool:
+        """Check if this task uses an ad-hoc agent."""
+        return self.adhoc_spec is not None
 
 
 class ParallelGroup(BaseModel):

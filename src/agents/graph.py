@@ -1,4 +1,4 @@
-"""LangGraph workflow definition for multi-agent system."""
+"""LangGraph workflow definition for multi-agent system with dynamic agents."""
 
 from typing import Literal, Any, AsyncIterator
 
@@ -7,11 +7,16 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langchain_core.messages import HumanMessage
 import structlog
 
-from src.agents.state import AgentState, create_initial_state, RequestContext
+from src.agents.state import AgentState, create_initial_state, RequestContext, Task
 from src.agents.main_agent import MainAgent
-from src.agents.registry import get_agent_registry, initialize_registries
+from src.agents.registry import (
+    get_agent_registry,
+    initialize_registries,
+    is_dynamic_mode,
+)
 from src.services.llm import get_llm
 from src.services.execution import ParallelExecutor
+from src.services.execution.parallel import get_next_tasks_to_execute
 from src.services.streaming import SSEManager
 from src.services.thread import get_thread_manager
 from src.services.error import get_error_handler, AgentError
@@ -22,33 +27,47 @@ logger = structlog.get_logger()
 
 class MultiAgentGraph:
     """
-    LangGraph-based multi-agent workflow.
+    LangGraph-based multi-agent workflow with dynamic agent support.
 
-    Orchestrates the MainAgent and SubAgents through a state machine.
+    Orchestrates the MainAgent and SubAgents (both pre-defined and ad-hoc)
+    through a state machine.
     """
 
-    def __init__(self, model_id: str | None = None):
+    def __init__(self, model_id: str | None = None, dynamic_mode: bool | None = None):
         """
         Initialize the graph.
 
         Args:
             model_id: Optional model ID for MainAgent
+            dynamic_mode: Override dynamic mode setting (None uses config)
         """
         self.settings = get_settings()
         self.model_id = model_id or self.settings.default_model_id
 
+        # Initialize registries first to load config
+        initialize_registries()
+
+        # Determine dynamic mode
+        if dynamic_mode is None:
+            self.dynamic_mode = is_dynamic_mode()
+        else:
+            self.dynamic_mode = dynamic_mode
+
         # Initialize components
         self.llm = get_llm(self.model_id)
-        self.main_agent = MainAgent(self.llm, self.model_id)
+        self.main_agent = MainAgent(self.llm, self.model_id, self.dynamic_mode)
         self.executor = ParallelExecutor()
         self.thread_manager = get_thread_manager()
         self.error_handler = get_error_handler()
 
-        # Initialize registries
-        initialize_registries()
-
         # Build the graph
         self.graph = self._build_graph()
+
+        logger.info(
+            "multi_agent_graph_initialized",
+            model_id=self.model_id,
+            dynamic_mode=self.dynamic_mode,
+        )
 
     def _build_graph(self) -> StateGraph:
         """Build the LangGraph state machine."""
@@ -99,52 +118,87 @@ class MultiAgentGraph:
         return graph
 
     async def _plan_node(self, state: AgentState) -> AgentState:
-        """Planning node - creates execution plan."""
-        logger.info("node_plan", session_id=state["session_id"])
+        """Planning node - creates execution plan with dynamic agents."""
+        logger.info(
+            "node_plan",
+            session_id=state["session_id"],
+            dynamic_mode=self.dynamic_mode,
+        )
 
         # Add user message to history
         state["messages"].append(
             HumanMessage(content=state["user_input"])
         )
 
-        # Create execution plan
+        # Create execution plan (may include ad-hoc agents)
         state = await self.main_agent.plan(state)
+
+        # Log plan summary
+        plan = state["execution_plan"]
+        adhoc_count = sum(1 for t in plan.tasks if t.is_adhoc)
+        logger.info(
+            "plan_created",
+            session_id=state["session_id"],
+            total_tasks=len(plan.tasks),
+            adhoc_agents=adhoc_count,
+            template_agents=len(plan.tasks) - adhoc_count,
+            parallel_groups=len(plan.parallel_groups),
+        )
 
         return state
 
     async def _execute_agents_node(self, state: AgentState) -> AgentState:
-        """Execute SubAgents node."""
+        """Execute SubAgents node - supports both pre-defined and ad-hoc agents."""
         logger.info("node_execute_agents", session_id=state["session_id"])
 
-        # Get agents to execute
-        agents_to_run = self.main_agent.get_agents_to_execute(state)
+        # Get completed agents
+        completed_agents = set(state["sub_agent_results"].keys())
 
-        if not agents_to_run:
+        # Get next tasks to execute
+        tasks_to_run = get_next_tasks_to_execute(
+            state["execution_plan"],
+            completed_agents,
+        )
+
+        if not tasks_to_run:
             logger.warning(
-                "no_agents_to_execute",
+                "no_tasks_to_execute",
                 session_id=state["session_id"],
+                completed=list(completed_agents),
             )
             return state
 
         # Update phase
         state["execution_plan"].current_phase = "executing"
 
-        # Check if parallel execution
-        is_parallel = self.main_agent.is_parallel_execution(state, agents_to_run)
-        timeout = self.main_agent.get_execution_timeout(state, agents_to_run)
+        # Get timeout
+        timeout = self.main_agent.get_execution_timeout(
+            state,
+            [t.effective_agent_name for t in tasks_to_run],
+        )
+
+        # Log execution info
+        task_info = [
+            {
+                "name": t.effective_agent_name,
+                "is_adhoc": t.is_adhoc,
+                "tools": t.adhoc_spec.tools if t.is_adhoc else None,
+            }
+            for t in tasks_to_run
+        ]
 
         logger.info(
-            "executing_agents",
+            "executing_tasks",
             session_id=state["session_id"],
-            agents=agents_to_run,
-            parallel=is_parallel,
+            tasks=task_info,
+            parallel=len(tasks_to_run) > 1,
             timeout=timeout,
         )
 
-        # Execute agents
-        results = await self.executor.execute_agents(
+        # Execute tasks (supports both pre-defined and ad-hoc agents)
+        results = await self.executor.execute_tasks(
             state,
-            agents_to_run,
+            tasks_to_run,
             timeout,
         )
 
@@ -185,9 +239,16 @@ class MultiAgentGraph:
 
     def _route_after_execution(self, state: AgentState) -> str:
         """Route after agent execution."""
-        # Check if more agents to execute
-        agents_remaining = self.main_agent.get_agents_to_execute(state)
-        if agents_remaining:
+        # Get completed agents
+        completed_agents = set(state["sub_agent_results"].keys())
+
+        # Check if more tasks to execute
+        remaining_tasks = get_next_tasks_to_execute(
+            state["execution_plan"],
+            completed_agents,
+        )
+
+        if remaining_tasks:
             return "execute_agents"
 
         # Check if evaluation is needed
@@ -204,7 +265,6 @@ class MultiAgentGraph:
             # Add catalog task if not already executed
             if "catalog" not in state["sub_agent_results"]:
                 # Add catalog to execution plan
-                from src.agents.state import Task
                 state["execution_plan"].tasks.append(
                     Task(
                         id="catalog_task",
@@ -374,10 +434,21 @@ class MultiAgentGraph:
 
         elif node_name == "execute_agents":
             for agent_name, result in state.get("sub_agent_results", {}).items():
+                # Include ad-hoc agent info if available
+                task = self._find_task_by_agent(state, agent_name)
+                agent_info = None
+                if task and task.is_adhoc:
+                    agent_info = {
+                        "type": "adhoc",
+                        "purpose": task.adhoc_spec.purpose,
+                        "tools": task.adhoc_spec.tools,
+                    }
+
                 await sse_manager.emit_agent_end(
                     agent_name=agent_name,
                     status=result.status,
                     duration_ms=result.duration_ms,
+                    metadata=agent_info,
                 )
 
         elif node_name == "evaluate":
@@ -393,6 +464,13 @@ class MultiAgentGraph:
                     await sse_manager.emit_token(chunk)
                 await sse_manager.emit_token("", finish_reason="stop")
 
+    def _find_task_by_agent(self, state: AgentState, agent_name: str) -> Task | None:
+        """Find a task by agent name."""
+        for task in state["execution_plan"].tasks:
+            if task.effective_agent_name == agent_name:
+                return task
+        return None
+
     async def _emit_session_complete(
         self,
         state: AgentState,
@@ -402,6 +480,25 @@ class MultiAgentGraph:
         """Emit session complete event."""
         metrics = state["metrics"]
 
+        # Build agents executed summary with ad-hoc info
+        agents_executed = []
+        for name, result in state.get("sub_agent_results", {}).items():
+            task = self._find_task_by_agent(state, name)
+            agent_info = {
+                "name": name,
+                "status": result.status,
+                "retries": result.retry_count,
+                "search_variations": result.search_variations,
+                "duration_ms": result.duration_ms,
+            }
+            if task and task.is_adhoc:
+                agent_info["type"] = "adhoc"
+                agent_info["purpose"] = task.adhoc_spec.purpose
+                agent_info["tools"] = task.adhoc_spec.tools
+            else:
+                agent_info["type"] = "template"
+            agents_executed.append(agent_info)
+
         complete_data = {
             "response": {
                 "content": state.get("final_response", ""),
@@ -409,16 +506,7 @@ class MultiAgentGraph:
             },
             "execution_summary": {
                 "plan": self.main_agent.get_plan_summary(state),
-                "agents_executed": [
-                    {
-                        "name": name,
-                        "status": result.status,
-                        "retries": result.retry_count,
-                        "search_variations": result.search_variations,
-                        "duration_ms": result.duration_ms,
-                    }
-                    for name, result in state.get("sub_agent_results", {}).items()
-                ],
+                "agents_executed": agents_executed,
                 "tools_executed": [
                     {
                         "tool": tr.tool_name,
@@ -465,14 +553,18 @@ class MultiAgentGraph:
         await sse_manager.emit_session_complete(complete_data)
 
 
-def create_graph(model_id: str | None = None) -> MultiAgentGraph:
+def create_graph(
+    model_id: str | None = None,
+    dynamic_mode: bool | None = None,
+) -> MultiAgentGraph:
     """
     Create a new multi-agent graph.
 
     Args:
         model_id: Optional model ID for MainAgent
+        dynamic_mode: Override dynamic mode setting
 
     Returns:
         MultiAgentGraph instance
     """
-    return MultiAgentGraph(model_id)
+    return MultiAgentGraph(model_id, dynamic_mode)
