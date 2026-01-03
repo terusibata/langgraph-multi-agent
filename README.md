@@ -1,4 +1,4 @@
-# LangGraph Multi-Agent Backend
+# LangGraph Multi-Agent
 
 階層型マルチエージェントアーキテクチャを実現する内部バックエンドAPIシステム。
 Next.jsアプリケーションからのみアクセスされ、LangGraphによるエージェント処理をSSE（Server-Sent Events）でストリーミング返却します。
@@ -484,7 +484,7 @@ Admin APIは以下の権限が必要です（アクセスキーのJWTに含め�
 ## プロジェクト構成
 
 ```
-langgraph-multi-agent-backend/
+langgraph-multi-agent/
 ├── docker/                      # Docker設定
 ├── src/
 │   ├── main.py                  # アプリケーションエントリーポイント
