@@ -5,6 +5,32 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+class CompanyContext(BaseModel):
+    """Company-specific context for multi-tenant operation."""
+
+    company_id: str = Field(..., description="Company identifier")
+    company_name: str | None = Field(
+        default=None,
+        description="Company name",
+    )
+    vision: str | None = Field(
+        default=None,
+        description="Company vision or mission statement",
+    )
+    terminology: dict[str, str] = Field(
+        default_factory=dict,
+        description="Company-specific terminology (e.g., {'システム': 'プラットフォーム'})",
+    )
+    reference_info: dict = Field(
+        default_factory=dict,
+        description="Additional reference information",
+    )
+    metadata: dict = Field(
+        default_factory=dict,
+        description="Additional metadata",
+    )
+
+
 class FileInput(BaseModel):
     """File input attached to a request."""
 
@@ -36,6 +62,10 @@ class AgentStreamRequest(BaseModel):
         max_length=10,
         description="Attached files (max 10)",
     )
+    company_context: CompanyContext | None = Field(
+        default=None,
+        description="Company-specific context (optional)",
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -45,12 +75,25 @@ class AgentStreamRequest(BaseModel):
                     "thread_id": None,
                     "model_id": None,
                     "files": [],
+                    "company_context": None,
                 },
                 {
                     "message": "先ほどの問題の続きですが、再起動しても解決しませんでした。",
                     "thread_id": "thread_xyz789",
                     "model_id": "anthropic.claude-3-5-sonnet-20241022-v2:0",
                     "files": [],
+                    "company_context": {
+                        "company_id": "acme_corp",
+                        "company_name": "Acme Corporation",
+                        "vision": "革新的なソリューションで顧客の課題を解決する",
+                        "terminology": {
+                            "システム": "プラットフォーム",
+                            "ユーザー": "メンバー"
+                        },
+                        "reference_info": {
+                            "support_hours": "平日9:00-18:00"
+                        }
+                    },
                 },
             ]
         }

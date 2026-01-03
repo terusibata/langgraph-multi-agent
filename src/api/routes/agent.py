@@ -19,7 +19,7 @@ from src.api.schemas.response import (
     ToolInfo,
 )
 from src.agents.graph import create_graph
-from src.agents.state import RequestContext as AgentRequestContext
+from src.agents.state import RequestContext as AgentRequestContext, CompanyContext as AgentCompanyContext
 from src.agents.registry import get_agent_registry, get_tool_registry, initialize_registries
 from src.services.streaming import SSEManager
 from src.services.error import get_error_handler, AgentError
@@ -62,12 +62,25 @@ async def stream_agent(
     # Extract service tokens
     service_tokens = await extract_service_tokens(request)
 
+    # Convert company context if provided
+    agent_company_context = None
+    if body.company_context:
+        agent_company_context = AgentCompanyContext(
+            company_id=body.company_context.company_id,
+            company_name=body.company_context.company_name,
+            vision=body.company_context.vision,
+            terminology=body.company_context.terminology,
+            reference_info=body.company_context.reference_info,
+            metadata=body.company_context.metadata,
+        )
+
     # Build agent request context
     agent_context = AgentRequestContext(
         tenant_id=context.tenant_id,
         user_id=context.user_id,
         permissions=context.permissions,
         service_tokens=service_tokens,
+        company_context=agent_company_context,
         request_metadata={
             "request_id": context.request_id,
             "client_ip": context.client_ip,
@@ -127,12 +140,25 @@ async def invoke_agent(
     # Extract service tokens
     service_tokens = await extract_service_tokens(request)
 
+    # Convert company context if provided
+    agent_company_context = None
+    if body.company_context:
+        agent_company_context = AgentCompanyContext(
+            company_id=body.company_context.company_id,
+            company_name=body.company_context.company_name,
+            vision=body.company_context.vision,
+            terminology=body.company_context.terminology,
+            reference_info=body.company_context.reference_info,
+            metadata=body.company_context.metadata,
+        )
+
     # Build agent request context
     agent_context = AgentRequestContext(
         tenant_id=context.tenant_id,
         user_id=context.user_id,
         permissions=context.permissions,
         service_tokens=service_tokens,
+        company_context=agent_company_context,
         request_metadata={
             "request_id": context.request_id,
             "client_ip": context.client_ip,
