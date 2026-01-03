@@ -39,6 +39,28 @@ class Settings(BaseSettings):
         description="AWS region for Bedrock",
     )
 
+    # Proxy settings (optional)
+    http_proxy: str | None = Field(
+        default=None,
+        description="HTTP proxy URL (e.g., http://proxy.example.com:8080)",
+    )
+    https_proxy: str | None = Field(
+        default=None,
+        description="HTTPS proxy URL (e.g., https://proxy.example.com:8080)",
+    )
+    proxy_ca_bundle: str | None = Field(
+        default=None,
+        description="Path to custom CA certificate bundle for proxy",
+    )
+    proxy_client_cert: str | None = Field(
+        default=None,
+        description="Path to client certificate for proxy authentication",
+    )
+    proxy_use_forwarding_for_https: bool = Field(
+        default=True,
+        description="Use CONNECT method for HTTPS proxying",
+    )
+
     # Authentication
     access_key_secret: str = Field(
         default="dev-secret-key-change-in-production",
