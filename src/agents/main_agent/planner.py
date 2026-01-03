@@ -28,6 +28,8 @@ logger = structlog.get_logger()
 TOOL_ANALYSIS_PROMPT = """あなたはマルチエージェントシステムのインテリジェントプランナーです。
 ユーザーのリクエストを分析し、利用可能なツールを使って最適な実行計画を立案してください。
 
+{company_context}
+
 ## 利用可能なツール
 {available_tools}
 
@@ -87,6 +89,8 @@ TOOL_ANALYSIS_PROMPT = """あなたはマルチエージェントシステムの
 
 SIMPLE_PLANNER_PROMPT = """あなたはマルチエージェントシステムの計画立案者です。
 ユーザーの質問を分析し、適切な実行計画を立ててください。
+
+{company_context}
 
 利用可能なエージェント:
 {available_agents}
@@ -208,6 +212,43 @@ class Planner:
 
         return "\n".join(descriptions)
 
+    def get_company_context_description(self, state: AgentState) -> str:
+        """
+        Get formatted company context for system prompt.
+
+        Args:
+            state: Current agent state
+
+        Returns:
+            Formatted company context string or empty string if not provided
+        """
+        company_context = state["request_context"].company_context
+        if not company_context:
+            return ""
+
+        sections = []
+        sections.append("## 会社情報")
+
+        if company_context.company_name:
+            sections.append(f"会社名: {company_context.company_name}")
+
+        if company_context.vision:
+            sections.append(f"\n### ビジョン・ミッション")
+            sections.append(company_context.vision)
+
+        if company_context.terminology:
+            sections.append(f"\n### 社内用語")
+            sections.append("以下の用語は、この会社特有の意味で使われています：")
+            for term, definition in company_context.terminology.items():
+                sections.append(f"- {term}: {definition}")
+
+        if company_context.reference_info:
+            sections.append(f"\n### 参考情報")
+            for key, value in company_context.reference_info.items():
+                sections.append(f"- {key}: {value}")
+
+        return "\n".join(sections) + "\n"
+
     async def create_plan(self, state: AgentState) -> ExecutionPlan:
         """
         Create an execution plan based on user input.
@@ -230,6 +271,7 @@ class Planner:
         # Build system prompt with caching for better performance
         # The tool and agent descriptions are cached since they change infrequently
         system_prompt_content = TOOL_ANALYSIS_PROMPT.format(
+            company_context=self.get_company_context_description(state),
             available_tools=self.get_available_tools_description(),
             template_agents=self.get_template_agents_description(),
         )
@@ -291,6 +333,7 @@ class Planner:
 
         # Build system prompt with caching
         system_prompt_content = SIMPLE_PLANNER_PROMPT.format(
+            company_context=self.get_company_context_description(state),
             available_agents=self.get_available_agents_description()
         )
 

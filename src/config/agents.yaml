@@ -1,5 +1,9 @@
 # SubAgent and Tool Configuration
 # This file defines which SubAgents and Tools are enabled and their settings
+#
+# NOTE: This is a template file for multi-tenant deployments.
+# In production, SubAgents and Tools should be registered dynamically via the Admin API
+# for each tenant/company. See agents.yaml.example for configuration examples.
 
 # =============================================================================
 # Planning Mode Configuration
@@ -16,151 +20,21 @@ planning:
 
 # =============================================================================
 # Template Agents (Pre-defined agent patterns)
-# These are well-tested agent configurations that can be reused
+# Define your company-specific template agents here, or use the Admin API
 # =============================================================================
-template_agents:
-  # Comprehensive search template - searches both knowledge base and vectors
-  comprehensive_search:
-    enabled: true
-    description: "包括的な検索を実行（ナレッジベース + ベクトル検索）"
-    purpose: "ユーザーの質問に対して、複数のソースから情報を収集"
-    capabilities:
-      - knowledge_search
-      - semantic_search
-    tools:
-      - servicenow_knowledge_search
-      - vector_db_search
-    parallel_execution: true
-    expected_output: "複数ソースからの検索結果とその関連度"
-
-  # IT support template - specialized for IT issues
-  it_support:
-    enabled: true
-    description: "IT問題のトラブルシューティング"
-    purpose: "IT関連の問題を診断し、解決策を提示"
-    capabilities:
-      - troubleshooting
-      - case_search
-    tools:
-      - servicenow_knowledge_search
-      - servicenow_case_search
-    parallel_execution: false
-    expected_output: "問題の診断結果と推奨される解決手順"
-
-  # Service request template - for finding the right service
-  service_request:
-    enabled: true
-    description: "適切なサービス申請先を特定"
-    purpose: "ユーザーのニーズに合ったサービスカタログアイテムを見つける"
-    capabilities:
-      - catalog_search
-      - recommendation
-    tools:
-      - catalog_list
-      - catalog_detail
-    parallel_execution: false
-    expected_output: "推奨されるサービスカタログアイテムと申請手順"
+template_agents: {}
 
 # =============================================================================
 # Static SubAgents (Python class implementations)
-# These are the original pre-defined agents
+# Define your static agents here, or use the Admin API for dynamic agents
 # =============================================================================
-sub_agents:
-  knowledge_search:
-    enabled: true
-    description: "ServiceNow公式ナレッジベースを検索"
-    capabilities:
-      - knowledge_search
-      - case_search
-    max_retries: 2
-    retry_strategy:
-      retry_conditions:
-        - no_results
-      query_modification: synonym
-      backoff_seconds: 0.5
-    tools:
-      - servicenow_knowledge_search
-      - servicenow_case_search
-
-  vector_search:
-    enabled: true
-    description: "事前構築済みナレッジのベクトル検索"
-    capabilities:
-      - semantic_search
-      - similarity_search
-    max_retries: 3
-    retry_strategy:
-      retry_conditions:
-        - no_results
-        - low_relevance
-      query_modification: llm_rewrite
-      backoff_seconds: 0.5
-    tools:
-      - vector_db_search
-
-  catalog:
-    enabled: true
-    description: "ServiceNowカタログから適切な申請先を調査"
-    capabilities:
-      - catalog_search
-      - catalog_recommendation
-    max_retries: 1
-    retry_strategy:
-      retry_conditions: []
-      query_modification: none
-      backoff_seconds: 0
-    tools:
-      - catalog_list
-      - catalog_detail
+sub_agents: {}
 
 # =============================================================================
 # Tools Configuration
+# Define your tools here, or use the Admin API for dynamic tools
 # =============================================================================
-tools:
-  servicenow_knowledge_search:
-    enabled: true
-    description: "ServiceNowのナレッジベースを検索します"
-    category: search
-    required_service_token: servicenow
-    timeout_seconds: 30
-
-  servicenow_case_search:
-    enabled: true
-    description: "ServiceNowのケース（チケット）を検索します"
-    category: search
-    required_service_token: servicenow
-    timeout_seconds: 30
-
-  servicenow_table_detail:
-    enabled: true
-    description: "ServiceNowテーブルの詳細情報を取得します"
-    category: data
-    required_service_token: servicenow
-    timeout_seconds: 30
-
-  vector_db_search:
-    enabled: true
-    description: "事前構築済みナレッジをセマンティック検索します"
-    category: search
-    required_service_token: vector_db
-    timeout_seconds: 30
-    settings:
-      default_top_k: 5
-      default_threshold: 0.7
-
-  catalog_list:
-    enabled: true
-    description: "ServiceNowサービスカタログの一覧を取得します"
-    category: catalog
-    required_service_token: servicenow
-    timeout_seconds: 30
-
-  catalog_detail:
-    enabled: true
-    description: "ServiceNowサービスカタログの詳細情報を取得します"
-    category: catalog
-    required_service_token: servicenow
-    timeout_seconds: 30
+tools: {}
 
 # =============================================================================
 # Execution Settings
@@ -180,9 +54,4 @@ execution:
 # Default Parallel Execution Groups
 # These define which agents can run in parallel by default
 # =============================================================================
-parallel_groups:
-  search_phase:
-    agents:
-      - knowledge_search
-      - vector_search
-    timeout_seconds: 30
+parallel_groups: {}

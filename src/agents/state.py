@@ -11,6 +11,29 @@ from pydantic import BaseModel, Field
 from src.api.middleware.service_tokens import ServiceTokens
 
 
+class CompanyContext(BaseModel):
+    """Context information for a company (tenant)."""
+
+    company_id: str = Field(..., description="Company identifier (same as tenant_id)")
+    company_name: str | None = Field(default=None, description="Company name")
+    vision: str | None = Field(
+        default=None,
+        description="Company vision or mission statement",
+    )
+    terminology: dict[str, str] = Field(
+        default_factory=dict,
+        description="Company-specific terminology mapping (term -> definition)",
+    )
+    reference_info: dict = Field(
+        default_factory=dict,
+        description="Additional reference information (guidelines, policies, etc.)",
+    )
+    metadata: dict = Field(
+        default_factory=dict,
+        description="Additional company metadata",
+    )
+
+
 class ServiceToken(BaseModel):
     """Service token information."""
 
@@ -32,6 +55,10 @@ class RequestContext(BaseModel):
     service_tokens: ServiceTokens = Field(
         default_factory=ServiceTokens,
         description="Service tokens for external APIs",
+    )
+    company_context: CompanyContext | None = Field(
+        default=None,
+        description="Company-specific context (vision, terminology, etc.)",
     )
     request_metadata: dict = Field(
         default_factory=dict,
