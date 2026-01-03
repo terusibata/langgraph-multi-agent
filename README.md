@@ -659,28 +659,6 @@ SystemMessage(
 
 クロスリージョン推論プロファイル（`us.anthropic.*`など）でも正常に動作します。
 
-### コスト計算
-
-正確なコスト計算のため、以下のトークン種別を区別して記録・計算します：
-
-1. **通常入力トークン**: 標準価格
-2. **キャッシュ作成トークン** (cache_creation): 標準価格の約2.5倍
-3. **キャッシュ読み取りトークン** (cache_read): 標準価格の約20% (10-20%)
-4. **出力トークン**: 標準価格
-
-**計算式**:
-```
-total_cost = (normal_input_tokens × input_cost)
-           + (cache_creation_tokens × cache_write_cost)
-           + (cache_read_tokens × cache_read_cost)
-           + (output_tokens × output_cost)
-
-# where:
-normal_input_tokens = total_input_tokens - cache_creation - cache_read
-```
-
-すべてのトークン数とコストはPrometheusメトリクスで記録され、監視可能です。
-
 ## 会話履歴とマルチターン対話
 
 このシステムはスレッド管理により会話履歴を保持し、マルチターン対話をサポートします。
