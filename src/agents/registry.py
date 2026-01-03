@@ -1,14 +1,16 @@
-"""Agent and Tool registry for dynamic registration and lookup."""
+"""Agent and Tool registry for database-backed registration and lookup."""
 
-from abc import ABC, abstractmethod
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Callable
 from uuid import uuid4
 import asyncio
 
-import yaml
 import structlog
+
+from src.models.base import get_session_factory
+from src.repositories.agent import AgentRepository
+from src.repositories.tool import ToolRepository
+from src.repositories.config import ConfigRepository
 
 if TYPE_CHECKING:
     from src.agents.sub_agents.base import SubAgentBase
@@ -50,42 +52,11 @@ class ListenerMixin:
 
 
 # =============================================================================
-# Definition base class (reduces code duplication)
+# Definition classes for type compatibility
 # =============================================================================
 
 
-class BaseDefinition(ABC):
-    """Base class for dynamic definitions."""
-
-    id: str
-    name: str
-    description: str
-    enabled: bool
-    metadata: dict
-    created_at: datetime
-    updated_at: datetime
-    created_by: str | None
-
-    def update(self, **kwargs) -> None:
-        """Update definition fields."""
-        for key, value in kwargs.items():
-            if hasattr(self, key) and value is not None:
-                setattr(self, key, value)
-        self.updated_at = datetime.now(timezone.utc)
-
-    @abstractmethod
-    def to_dict(self) -> dict:
-        """Convert to dictionary."""
-        pass
-
-    @classmethod
-    @abstractmethod
-    def from_dict(cls, data: dict) -> "BaseDefinition":
-        """Create from dictionary."""
-        pass
-
-
-class ToolDefinition(BaseDefinition):
+class ToolDefinition:
     """
     Dynamic tool definition that can be created/modified at runtime.
     """
@@ -120,6 +91,13 @@ class ToolDefinition(BaseDefinition):
         self.updated_at = updated_at or datetime.now(timezone.utc)
         self.created_by = created_by
 
+    def update(self, **kwargs) -> None:
+        """Update definition fields."""
+        for key, value in kwargs.items():
+            if hasattr(self, key) and value is not None:
+                setattr(self, key, value)
+        self.updated_at = datetime.now(timezone.utc)
+
     def to_dict(self) -> dict:
         """Convert to dictionary."""
         return {
@@ -144,7 +122,7 @@ class ToolDefinition(BaseDefinition):
         return cls(**data)
 
 
-class AgentDefinition(BaseDefinition):
+class AgentDefinition:
     """
     Dynamic agent definition that can be created/modified at runtime.
     """
@@ -184,6 +162,13 @@ class AgentDefinition(BaseDefinition):
         self.updated_at = updated_at or datetime.now(timezone.utc)
         self.created_by = created_by
 
+    def update(self, **kwargs) -> None:
+        """Update definition fields."""
+        for key, value in kwargs.items():
+            if hasattr(self, key) and value is not None:
+                setattr(self, key, value)
+        self.updated_at = datetime.now(timezone.utc)
+
     def to_dict(self) -> dict:
         """Convert to dictionary."""
         return {
@@ -208,529 +193,9 @@ class AgentDefinition(BaseDefinition):
         return cls(**data)
 
 
-class ToolRegistry(ListenerMixin):
-    """
-    Registry for tool instances and definitions.
-
-    Supports both:
-    - Static tools (Python class implementations)
-    - Dynamic tools (runtime-defined via API)
-    """
-
-    def __init__(self):
-        super().__init__()  # Initialize listener mixin
-        # Static tools (Python implementations)
-        self._tools: dict[str, "ToolBase"] = {}
-        self._config: dict[str, dict] = {}
-
-        # Dynamic tool definitions
-        self._definitions: dict[str, ToolDefinition] = {}
-
-        # Lock for thread-safe operations
-        self._lock = asyncio.Lock()
-
-    def register(self, tool: "ToolBase") -> None:
-        """Register a static tool instance."""
-        self._tools[tool.name] = tool
-        logger.debug("tool_registered", tool_name=tool.name, type="static")
-
-    def unregister(self, name: str) -> bool:
-        """Unregister a tool by name."""
-        if name in self._tools:
-            del self._tools[name]
-            logger.debug("tool_unregistered", tool_name=name, type="static")
-            return True
-        if name in self._definitions:
-            del self._definitions[name]
-            logger.debug("tool_unregistered", tool_name=name, type="dynamic")
-            return True
-        return False
-
-    async def register_definition(
-        self,
-        definition: ToolDefinition,
-        user_id: str | None = None,
-    ) -> ToolDefinition:
-        """
-        Register a dynamic tool definition.
-
-        Args:
-            definition: Tool definition to register
-            user_id: ID of the user creating the definition
-
-        Returns:
-            The registered definition
-        """
-        async with self._lock:
-            if definition.name in self._tools:
-                raise ValueError(f"Tool '{definition.name}' already exists as a static tool")
-
-            if definition.name in self._definitions:
-                raise ValueError(f"Tool '{definition.name}' already exists")
-
-            definition.created_by = user_id
-            self._definitions[definition.name] = definition
-
-            logger.info(
-                "tool_definition_registered",
-                tool_name=definition.name,
-                tool_id=definition.id,
-            )
-
-            await self._notify_listeners("tool_created", definition)
-            return definition
-
-    async def update_definition(
-        self,
-        name: str,
-        updates: dict,
-    ) -> ToolDefinition | None:
-        """
-        Update a dynamic tool definition.
-
-        Args:
-            name: Tool name
-            updates: Dictionary of fields to update
-
-        Returns:
-            Updated definition or None if not found
-        """
-        async with self._lock:
-            if name not in self._definitions:
-                return None
-
-            definition = self._definitions[name]
-            definition.update(**updates)
-
-            logger.info(
-                "tool_definition_updated",
-                tool_name=name,
-                tool_id=definition.id,
-            )
-
-            await self._notify_listeners("tool_updated", definition)
-            return definition
-
-    async def delete_definition(self, name: str) -> bool:
-        """
-        Delete a dynamic tool definition.
-
-        Args:
-            name: Tool name
-
-        Returns:
-            True if deleted, False if not found
-        """
-        async with self._lock:
-            if name not in self._definitions:
-                return False
-
-            definition = self._definitions.pop(name)
-
-            logger.info(
-                "tool_definition_deleted",
-                tool_name=name,
-                tool_id=definition.id,
-            )
-
-            await self._notify_listeners("tool_deleted", definition)
-            return True
-
-    def get(self, name: str) -> "ToolBase | None":
-        """Get a static tool by name."""
-        return self._tools.get(name)
-
-    def get_definition(self, name: str) -> ToolDefinition | None:
-        """Get a dynamic tool definition by name."""
-        return self._definitions.get(name)
-
-    def get_definition_by_id(self, id: str) -> ToolDefinition | None:
-        """Get a dynamic tool definition by ID."""
-        for definition in self._definitions.values():
-            if definition.id == id:
-                return definition
-        return None
-
-    def list_all(self) -> list["ToolBase"]:
-        """List all registered static tools."""
-        return list(self._tools.values())
-
-    def list_all_definitions(self) -> list[ToolDefinition]:
-        """List all dynamic tool definitions."""
-        return list(self._definitions.values())
-
-    def list_by_service(self, service: str) -> list["ToolBase"]:
-        """List static tools that require a specific service token."""
-        return [
-            tool
-            for tool in self._tools.values()
-            if tool.required_service_token == service
-        ]
-
-    def list_enabled(self) -> list["ToolBase"]:
-        """List all enabled static tools."""
-        return [
-            tool
-            for tool in self._tools.values()
-            if self._config.get(tool.name, {}).get("enabled", True)
-        ]
-
-    def list_enabled_definitions(self) -> list[ToolDefinition]:
-        """List all enabled dynamic tool definitions."""
-        return [
-            definition
-            for definition in self._definitions.values()
-            if definition.enabled
-        ]
-
-    def load_config(self, config: dict[str, dict]) -> None:
-        """Load tool configuration."""
-        self._config = config
-
-    def is_enabled(self, name: str) -> bool:
-        """Check if a tool is enabled."""
-        # Check dynamic definitions first
-        if name in self._definitions:
-            return self._definitions[name].enabled
-        # Then check static config
-        return self._config.get(name, {}).get("enabled", True)
-
-    def get_tool_info(self, name: str) -> dict | None:
-        """Get tool information (static or dynamic)."""
-        # Check dynamic definitions first
-        if name in self._definitions:
-            return self._definitions[name].to_dict()
-
-        # Then check static tools
-        tool = self.get(name)
-        if not tool:
-            return None
-        return {
-            "id": f"static_{name}",
-            "name": tool.name,
-            "description": tool.description,
-            "category": "static",
-            "parameters": [],
-            "executor": {"type": "python"},
-            "required_service_token": tool.required_service_token,
-            "timeout_seconds": tool.timeout_seconds,
-            "enabled": self.is_enabled(name),
-            "metadata": {"type": "static"},
-            "created_at": None,
-            "updated_at": None,
-            "created_by": None,
-        }
-
-    def get_all_tool_names(self) -> list[str]:
-        """Get all tool names (static and dynamic)."""
-        names = set(self._tools.keys())
-        names.update(self._definitions.keys())
-        return sorted(list(names))
-
-
-class AgentRegistry(ListenerMixin):
-    """
-    Registry for SubAgent instances and definitions.
-
-    Supports both:
-    - Static agents (Python class implementations)
-    - Dynamic agents (runtime-defined via API)
-    """
-
-    def __init__(self):
-        super().__init__()  # Initialize listener mixin
-        # Static agents (Python implementations)
-        self._agents: dict[str, "SubAgentBase"] = {}
-        self._config: dict[str, dict] = {}
-
-        # Dynamic agent definitions
-        self._definitions: dict[str, AgentDefinition] = {}
-
-        # Lock for thread-safe operations
-        self._lock = asyncio.Lock()
-
-    def register(self, agent: "SubAgentBase") -> None:
-        """Register a static agent instance."""
-        self._agents[agent.name] = agent
-        logger.debug("agent_registered", agent_name=agent.name, type="static")
-
-    def unregister(self, name: str) -> bool:
-        """Unregister an agent by name."""
-        if name in self._agents:
-            del self._agents[name]
-            logger.debug("agent_unregistered", agent_name=name, type="static")
-            return True
-        if name in self._definitions:
-            del self._definitions[name]
-            logger.debug("agent_unregistered", agent_name=name, type="dynamic")
-            return True
-        return False
-
-    async def register_definition(
-        self,
-        definition: AgentDefinition,
-        user_id: str | None = None,
-    ) -> AgentDefinition:
-        """
-        Register a dynamic agent definition.
-
-        Args:
-            definition: Agent definition to register
-            user_id: ID of the user creating the definition
-
-        Returns:
-            The registered definition
-        """
-        async with self._lock:
-            if definition.name in self._agents:
-                raise ValueError(f"Agent '{definition.name}' already exists as a static agent")
-
-            if definition.name in self._definitions:
-                raise ValueError(f"Agent '{definition.name}' already exists")
-
-            definition.created_by = user_id
-            self._definitions[definition.name] = definition
-
-            logger.info(
-                "agent_definition_registered",
-                agent_name=definition.name,
-                agent_id=definition.id,
-            )
-
-            await self._notify_listeners("agent_created", definition)
-            return definition
-
-    async def update_definition(
-        self,
-        name: str,
-        updates: dict,
-    ) -> AgentDefinition | None:
-        """
-        Update a dynamic agent definition.
-
-        Args:
-            name: Agent name
-            updates: Dictionary of fields to update
-
-        Returns:
-            Updated definition or None if not found
-        """
-        async with self._lock:
-            if name not in self._definitions:
-                return None
-
-            definition = self._definitions[name]
-            definition.update(**updates)
-
-            logger.info(
-                "agent_definition_updated",
-                agent_name=name,
-                agent_id=definition.id,
-            )
-
-            await self._notify_listeners("agent_updated", definition)
-            return definition
-
-    async def delete_definition(self, name: str) -> bool:
-        """
-        Delete a dynamic agent definition.
-
-        Args:
-            name: Agent name
-
-        Returns:
-            True if deleted, False if not found
-        """
-        async with self._lock:
-            if name not in self._definitions:
-                return False
-
-            definition = self._definitions.pop(name)
-
-            logger.info(
-                "agent_definition_deleted",
-                agent_name=name,
-                agent_id=definition.id,
-            )
-
-            await self._notify_listeners("agent_deleted", definition)
-            return True
-
-    def get(self, name: str) -> "SubAgentBase | None":
-        """Get a static agent by name."""
-        return self._agents.get(name)
-
-    def get_definition(self, name: str) -> AgentDefinition | None:
-        """Get a dynamic agent definition by name."""
-        return self._definitions.get(name)
-
-    def get_definition_by_id(self, id: str) -> AgentDefinition | None:
-        """Get a dynamic agent definition by ID."""
-        for definition in self._definitions.values():
-            if definition.id == id:
-                return definition
-        return None
-
-    def list_all(self) -> list["SubAgentBase"]:
-        """List all registered static agents."""
-        return list(self._agents.values())
-
-    def list_all_definitions(self) -> list[AgentDefinition]:
-        """List all dynamic agent definitions."""
-        return list(self._definitions.values())
-
-    def list_by_capability(self, capability: str) -> list["SubAgentBase"]:
-        """List static agents with a specific capability."""
-        return [
-            agent
-            for agent in self._agents.values()
-            if capability in agent.capabilities
-        ]
-
-    def list_definitions_by_capability(self, capability: str) -> list[AgentDefinition]:
-        """List dynamic agents with a specific capability."""
-        return [
-            definition
-            for definition in self._definitions.values()
-            if capability in definition.capabilities
-        ]
-
-    def list_enabled(self) -> list["SubAgentBase"]:
-        """List all enabled static agents."""
-        return [
-            agent
-            for agent in self._agents.values()
-            if self._config.get(agent.name, {}).get("enabled", True)
-        ]
-
-    def list_enabled_definitions(self) -> list[AgentDefinition]:
-        """List all enabled dynamic agent definitions."""
-        return [
-            definition
-            for definition in self._definitions.values()
-            if definition.enabled
-        ]
-
-    def load_config(self, config: dict[str, dict]) -> None:
-        """Load agent configuration."""
-        self._config = config
-
-    def is_enabled(self, name: str) -> bool:
-        """Check if an agent is enabled."""
-        # Check dynamic definitions first
-        if name in self._definitions:
-            return self._definitions[name].enabled
-        # Then check static config
-        return self._config.get(name, {}).get("enabled", True)
-
-    def get_agent_config(self, name: str) -> dict:
-        """Get agent configuration."""
-        # Check dynamic definitions first
-        if name in self._definitions:
-            return self._definitions[name].to_dict()
-        # Then check static config
-        return self._config.get(name, {})
-
-    def get_agent_info(self, name: str) -> dict | None:
-        """Get agent information (static or dynamic)."""
-        # Check dynamic definitions first
-        if name in self._definitions:
-            return self._definitions[name].to_dict()
-
-        # Then check static agents
-        agent = self.get(name)
-        if not agent:
-            return None
-        config = self.get_agent_config(name)
-        return {
-            "id": f"static_{name}",
-            "name": agent.name,
-            "description": agent.description,
-            "capabilities": agent.capabilities,
-            "tools": config.get("tools", [tool.name for tool in agent.tools]),
-            "executor": {"type": "python"},
-            "retry_strategy": {
-                "max_attempts": agent.retry_strategy.max_attempts,
-                "retry_conditions": agent.retry_strategy.retry_conditions,
-                "query_modification": agent.retry_strategy.query_modification,
-                "backoff_seconds": agent.retry_strategy.backoff_seconds,
-            },
-            "priority": 0,
-            "enabled": self.is_enabled(name),
-            "metadata": {"type": "static"},
-            "created_at": None,
-            "updated_at": None,
-            "created_by": None,
-        }
-
-    def get_all_agent_names(self) -> list[str]:
-        """Get all agent names (static and dynamic)."""
-        names = set(self._agents.keys())
-        names.update(self._definitions.keys())
-        return sorted(list(names))
-
-
-# Global registry instances
-_tool_registry: ToolRegistry | None = None
-_agent_registry: AgentRegistry | None = None
-
-
-def get_tool_registry() -> ToolRegistry:
-    """Get the global tool registry."""
-    global _tool_registry
-    if _tool_registry is None:
-        _tool_registry = ToolRegistry()
-    return _tool_registry
-
-
-def get_agent_registry() -> AgentRegistry:
-    """Get the global agent registry."""
-    global _agent_registry
-    if _agent_registry is None:
-        _agent_registry = AgentRegistry()
-    return _agent_registry
-
-
-def reset_registries() -> None:
-    """Reset registries (useful for testing)."""
-    global _tool_registry, _agent_registry
-    _tool_registry = None
-    _agent_registry = None
-
-
-def load_agents_config(config_path: str | None = None) -> dict[str, Any]:
-    """
-    Load agent configuration from YAML file.
-
-    Args:
-        config_path: Path to configuration file
-
-    Returns:
-        Parsed configuration dictionary
-    """
-    if config_path is None:
-        # Default path relative to this file
-        config_path = str(Path(__file__).parent.parent / "config" / "agents.yaml")
-
-    try:
-        with open(config_path) as f:
-            config = yaml.safe_load(f)
-        logger.info("agents_config_loaded", path=config_path)
-        return config or {}
-    except FileNotFoundError:
-        logger.warning("agents_config_not_found", path=config_path)
-        return {}
-    except yaml.YAMLError as e:
-        logger.error("agents_config_parse_error", path=config_path, error=str(e))
-        return {}
-
-
 class TemplateAgentDefinition:
     """
-    Template agent definition loaded from configuration.
-
-    Templates are pre-configured agent patterns that can be quickly
-    instantiated by the Planner.
+    Template agent definition for pre-configured agent patterns.
     """
 
     def __init__(
@@ -781,78 +246,547 @@ class TemplateAgentDefinition:
         )
 
 
-# Template agents registry
-_template_agents: dict[str, TemplateAgentDefinition] = {}
+# =============================================================================
+# Database-backed Tool Registry
+# =============================================================================
 
 
-def get_template_agents() -> dict[str, TemplateAgentDefinition]:
-    """Get all template agent definitions."""
-    return _template_agents
-
-
-def get_template_agent(name: str) -> TemplateAgentDefinition | None:
-    """Get a template agent by name."""
-    return _template_agents.get(name)
-
-
-def list_enabled_templates() -> list[TemplateAgentDefinition]:
-    """List all enabled template agents."""
-    return [t for t in _template_agents.values() if t.enabled]
-
-
-# Planning configuration
-_planning_config: dict = {}
-
-
-def get_planning_config() -> dict:
-    """Get the planning configuration."""
-    return _planning_config
-
-
-def is_dynamic_mode() -> bool:
-    """Check if dynamic mode is enabled."""
-    return _planning_config.get("dynamic_mode", True)
-
-
-def should_prefer_templates() -> bool:
-    """Check if templates should be preferred over ad-hoc agents."""
-    return _planning_config.get("prefer_templates", True)
-
-
-def initialize_registries(config_path: str | None = None) -> None:
+class ToolRegistry(ListenerMixin):
     """
-    Initialize registries with configuration.
-
-    Args:
-        config_path: Optional path to agents.yaml
+    Registry for tool instances and definitions.
+    Uses database for persistence of dynamic tool definitions.
+    Static tools (Python class implementations) are kept in memory.
     """
-    global _template_agents, _planning_config
 
-    config = load_agents_config(config_path)
+    def __init__(self):
+        super().__init__()
+        # Static tools (Python implementations) - in memory
+        self._tools: dict[str, "ToolBase"] = {}
+        # Lock for thread-safe operations
+        self._lock = asyncio.Lock()
 
-    # Load configurations
-    tool_registry = get_tool_registry()
-    agent_registry = get_agent_registry()
+    def register(self, tool: "ToolBase") -> None:
+        """Register a static tool instance."""
+        self._tools[tool.name] = tool
+        logger.debug("tool_registered", tool_name=tool.name, type="static")
 
-    tool_registry.load_config(config.get("tools", {}))
-    agent_registry.load_config(config.get("sub_agents", {}))
+    def unregister(self, name: str) -> bool:
+        """Unregister a static tool by name."""
+        if name in self._tools:
+            del self._tools[name]
+            logger.debug("tool_unregistered", tool_name=name, type="static")
+            return True
+        return False
 
-    # Load planning configuration
-    _planning_config = config.get("planning", {})
+    async def register_definition(
+        self,
+        definition: ToolDefinition,
+        user_id: str | None = None,
+    ) -> ToolDefinition:
+        """Register a dynamic tool definition in database."""
+        async with self._lock:
+            if definition.name in self._tools:
+                raise ValueError(f"Tool '{definition.name}' already exists as a static tool")
 
-    # Load template agents
-    _template_agents = {}
-    for name, template_config in config.get("template_agents", {}).items():
-        template = TemplateAgentDefinition.from_dict(name, template_config)
-        _template_agents[name] = template
+            session_factory = get_session_factory()
+            async with session_factory() as session:
+                repo = ToolRepository(session)
+                if await repo.tool_exists(definition.name):
+                    raise ValueError(f"Tool '{definition.name}' already exists")
 
-    logger.info(
-        "registries_initialized",
-        tools_configured=len(config.get("tools", {})),
-        agents_configured=len(config.get("sub_agents", {})),
-        templates_configured=len(_template_agents),
-        dynamic_mode=_planning_config.get("dynamic_mode", True),
-    )
+                definition.created_by = user_id
+                tool_data = definition.to_dict()
+                await repo.create_tool(tool_data)
+
+            logger.info(
+                "tool_definition_registered",
+                tool_name=definition.name,
+                tool_id=definition.id,
+            )
+
+            await self._notify_listeners("tool_created", definition)
+            return definition
+
+    async def update_definition(
+        self,
+        name: str,
+        updates: dict,
+    ) -> ToolDefinition | None:
+        """Update a dynamic tool definition in database."""
+        async with self._lock:
+            session_factory = get_session_factory()
+            async with session_factory() as session:
+                repo = ToolRepository(session)
+                tool = await repo.get_tool_by_name(name)
+                if not tool:
+                    return None
+
+                updated = await repo.update_tool(tool.id, updates)
+                if not updated:
+                    return None
+
+                definition = ToolDefinition.from_dict(updated.to_dict())
+
+            logger.info(
+                "tool_definition_updated",
+                tool_name=name,
+                tool_id=definition.id,
+            )
+
+            await self._notify_listeners("tool_updated", definition)
+            return definition
+
+    async def delete_definition(self, name: str) -> bool:
+        """Delete a dynamic tool definition from database."""
+        async with self._lock:
+            session_factory = get_session_factory()
+            async with session_factory() as session:
+                repo = ToolRepository(session)
+                deleted = await repo.delete_tool_by_name(name)
+
+            if deleted:
+                logger.info("tool_definition_deleted", tool_name=name)
+                await self._notify_listeners("tool_deleted", {"name": name})
+
+            return deleted
+
+    def get(self, name: str) -> "ToolBase | None":
+        """Get a static tool by name."""
+        return self._tools.get(name)
+
+    async def get_definition(self, name: str) -> ToolDefinition | None:
+        """Get a dynamic tool definition by name from database."""
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            repo = ToolRepository(session)
+            tool = await repo.get_tool_by_name(name)
+            if tool:
+                return ToolDefinition.from_dict(tool.to_dict())
+        return None
+
+    async def get_definition_by_id(self, id: str) -> ToolDefinition | None:
+        """Get a dynamic tool definition by ID from database."""
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            repo = ToolRepository(session)
+            tool = await repo.get_tool_by_id(id)
+            if tool:
+                return ToolDefinition.from_dict(tool.to_dict())
+        return None
+
+    def list_all(self) -> list["ToolBase"]:
+        """List all registered static tools."""
+        return list(self._tools.values())
+
+    async def list_all_definitions(self) -> list[ToolDefinition]:
+        """List all dynamic tool definitions from database."""
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            repo = ToolRepository(session)
+            tools = await repo.list_tools()
+            return [ToolDefinition.from_dict(t.to_dict()) for t in tools]
+
+    def list_by_service(self, service: str) -> list["ToolBase"]:
+        """List static tools that require a specific service token."""
+        return [
+            tool
+            for tool in self._tools.values()
+            if tool.required_service_token == service
+        ]
+
+    def list_enabled(self) -> list["ToolBase"]:
+        """List all enabled static tools."""
+        return list(self._tools.values())
+
+    async def list_enabled_definitions(self) -> list[ToolDefinition]:
+        """List all enabled dynamic tool definitions from database."""
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            repo = ToolRepository(session)
+            tools = await repo.list_tools(enabled_only=True)
+            return [ToolDefinition.from_dict(t.to_dict()) for t in tools]
+
+    async def is_enabled(self, name: str) -> bool:
+        """Check if a tool is enabled."""
+        # Static tools are always enabled
+        if name in self._tools:
+            return True
+        # Check database for dynamic tools
+        definition = await self.get_definition(name)
+        return definition.enabled if definition else False
+
+    async def get_tool_info(self, name: str) -> dict | None:
+        """Get tool information (static or dynamic)."""
+        # Check database first for dynamic tools
+        definition = await self.get_definition(name)
+        if definition:
+            return definition.to_dict()
+
+        # Then check static tools
+        tool = self.get(name)
+        if not tool:
+            return None
+        return {
+            "id": f"static_{name}",
+            "name": tool.name,
+            "description": tool.description,
+            "category": "static",
+            "parameters": [],
+            "executor": {"type": "python"},
+            "required_service_token": tool.required_service_token,
+            "timeout_seconds": tool.timeout_seconds,
+            "enabled": True,
+            "metadata": {"type": "static"},
+            "created_at": None,
+            "updated_at": None,
+            "created_by": None,
+        }
+
+    async def get_all_tool_names(self) -> list[str]:
+        """Get all tool names (static and dynamic)."""
+        names = set(self._tools.keys())
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            repo = ToolRepository(session)
+            db_names = await repo.get_all_tool_names()
+            names.update(db_names)
+        return sorted(list(names))
+
+
+# =============================================================================
+# Database-backed Agent Registry
+# =============================================================================
+
+
+class AgentRegistry(ListenerMixin):
+    """
+    Registry for SubAgent instances and definitions.
+    Uses database for persistence of dynamic agent definitions.
+    Static agents (Python class implementations) are kept in memory.
+    """
+
+    def __init__(self):
+        super().__init__()
+        # Static agents (Python implementations) - in memory
+        self._agents: dict[str, "SubAgentBase"] = {}
+        # Lock for thread-safe operations
+        self._lock = asyncio.Lock()
+
+    def register(self, agent: "SubAgentBase") -> None:
+        """Register a static agent instance."""
+        self._agents[agent.name] = agent
+        logger.debug("agent_registered", agent_name=agent.name, type="static")
+
+    def unregister(self, name: str) -> bool:
+        """Unregister a static agent by name."""
+        if name in self._agents:
+            del self._agents[name]
+            logger.debug("agent_unregistered", agent_name=name, type="static")
+            return True
+        return False
+
+    async def register_definition(
+        self,
+        definition: AgentDefinition,
+        user_id: str | None = None,
+    ) -> AgentDefinition:
+        """Register a dynamic agent definition in database."""
+        async with self._lock:
+            if definition.name in self._agents:
+                raise ValueError(f"Agent '{definition.name}' already exists as a static agent")
+
+            session_factory = get_session_factory()
+            async with session_factory() as session:
+                repo = AgentRepository(session)
+                if await repo.agent_exists(definition.name):
+                    raise ValueError(f"Agent '{definition.name}' already exists")
+
+                definition.created_by = user_id
+                agent_data = definition.to_dict()
+                await repo.create_agent(agent_data)
+
+            logger.info(
+                "agent_definition_registered",
+                agent_name=definition.name,
+                agent_id=definition.id,
+            )
+
+            await self._notify_listeners("agent_created", definition)
+            return definition
+
+    async def update_definition(
+        self,
+        name: str,
+        updates: dict,
+    ) -> AgentDefinition | None:
+        """Update a dynamic agent definition in database."""
+        async with self._lock:
+            session_factory = get_session_factory()
+            async with session_factory() as session:
+                repo = AgentRepository(session)
+                agent = await repo.get_agent_by_name(name)
+                if not agent:
+                    return None
+
+                updated = await repo.update_agent(agent.id, updates)
+                if not updated:
+                    return None
+
+                definition = AgentDefinition.from_dict(updated.to_dict())
+
+            logger.info(
+                "agent_definition_updated",
+                agent_name=name,
+                agent_id=definition.id,
+            )
+
+            await self._notify_listeners("agent_updated", definition)
+            return definition
+
+    async def delete_definition(self, name: str) -> bool:
+        """Delete a dynamic agent definition from database."""
+        async with self._lock:
+            session_factory = get_session_factory()
+            async with session_factory() as session:
+                repo = AgentRepository(session)
+                deleted = await repo.delete_agent_by_name(name)
+
+            if deleted:
+                logger.info("agent_definition_deleted", agent_name=name)
+                await self._notify_listeners("agent_deleted", {"name": name})
+
+            return deleted
+
+    def get(self, name: str) -> "SubAgentBase | None":
+        """Get a static agent by name."""
+        return self._agents.get(name)
+
+    async def get_definition(self, name: str) -> AgentDefinition | None:
+        """Get a dynamic agent definition by name from database."""
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            repo = AgentRepository(session)
+            agent = await repo.get_agent_by_name(name)
+            if agent:
+                return AgentDefinition.from_dict(agent.to_dict())
+        return None
+
+    async def get_definition_by_id(self, id: str) -> AgentDefinition | None:
+        """Get a dynamic agent definition by ID from database."""
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            repo = AgentRepository(session)
+            agent = await repo.get_agent_by_id(id)
+            if agent:
+                return AgentDefinition.from_dict(agent.to_dict())
+        return None
+
+    def list_all(self) -> list["SubAgentBase"]:
+        """List all registered static agents."""
+        return list(self._agents.values())
+
+    async def list_all_definitions(self) -> list[AgentDefinition]:
+        """List all dynamic agent definitions from database."""
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            repo = AgentRepository(session)
+            agents = await repo.list_agents()
+            return [AgentDefinition.from_dict(a.to_dict()) for a in agents]
+
+    def list_by_capability(self, capability: str) -> list["SubAgentBase"]:
+        """List static agents with a specific capability."""
+        return [
+            agent
+            for agent in self._agents.values()
+            if capability in agent.capabilities
+        ]
+
+    async def list_definitions_by_capability(self, capability: str) -> list[AgentDefinition]:
+        """List dynamic agents with a specific capability from database."""
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            repo = AgentRepository(session)
+            agents = await repo.list_agents_by_capability(capability)
+            return [AgentDefinition.from_dict(a.to_dict()) for a in agents]
+
+    def list_enabled(self) -> list["SubAgentBase"]:
+        """List all enabled static agents."""
+        return list(self._agents.values())
+
+    async def list_enabled_definitions(self) -> list[AgentDefinition]:
+        """List all enabled dynamic agent definitions from database."""
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            repo = AgentRepository(session)
+            agents = await repo.list_agents(enabled_only=True)
+            return [AgentDefinition.from_dict(a.to_dict()) for a in agents]
+
+    async def is_enabled(self, name: str) -> bool:
+        """Check if an agent is enabled."""
+        # Static agents are always enabled
+        if name in self._agents:
+            return True
+        # Check database for dynamic agents
+        definition = await self.get_definition(name)
+        return definition.enabled if definition else False
+
+    async def get_agent_config(self, name: str) -> dict:
+        """Get agent configuration."""
+        # Check database first for dynamic agents
+        definition = await self.get_definition(name)
+        if definition:
+            return definition.to_dict()
+        # Return empty dict for static agents
+        return {}
+
+    async def get_agent_info(self, name: str) -> dict | None:
+        """Get agent information (static or dynamic)."""
+        # Check database first for dynamic agents
+        definition = await self.get_definition(name)
+        if definition:
+            return definition.to_dict()
+
+        # Then check static agents
+        agent = self.get(name)
+        if not agent:
+            return None
+        return {
+            "id": f"static_{name}",
+            "name": agent.name,
+            "description": agent.description,
+            "capabilities": agent.capabilities,
+            "tools": [tool.name for tool in agent.tools],
+            "executor": {"type": "python"},
+            "retry_strategy": {
+                "max_attempts": agent.retry_strategy.max_attempts,
+                "retry_conditions": agent.retry_strategy.retry_conditions,
+                "query_modification": agent.retry_strategy.query_modification,
+                "backoff_seconds": agent.retry_strategy.backoff_seconds,
+            },
+            "priority": 0,
+            "enabled": True,
+            "metadata": {"type": "static"},
+            "created_at": None,
+            "updated_at": None,
+            "created_by": None,
+        }
+
+    async def get_all_agent_names(self) -> list[str]:
+        """Get all agent names (static and dynamic)."""
+        names = set(self._agents.keys())
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            repo = AgentRepository(session)
+            db_names = await repo.get_all_agent_names()
+            names.update(db_names)
+        return sorted(list(names))
+
+
+# Global registry instances
+_tool_registry: ToolRegistry | None = None
+_agent_registry: AgentRegistry | None = None
+
+
+def get_tool_registry() -> ToolRegistry:
+    """Get the global tool registry."""
+    global _tool_registry
+    if _tool_registry is None:
+        _tool_registry = ToolRegistry()
+    return _tool_registry
+
+
+def get_agent_registry() -> AgentRegistry:
+    """Get the global agent registry."""
+    global _agent_registry
+    if _agent_registry is None:
+        _agent_registry = AgentRegistry()
+    return _agent_registry
+
+
+def reset_registries() -> None:
+    """Reset registries (useful for testing)."""
+    global _tool_registry, _agent_registry
+    _tool_registry = None
+    _agent_registry = None
+
+
+# =============================================================================
+# Template Agents (database-backed)
+# =============================================================================
+
+
+async def get_template_agents() -> dict[str, TemplateAgentDefinition]:
+    """Get all template agent definitions from database."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        repo = AgentRepository(session)
+        templates = await repo.list_template_agents()
+        return {t.name: TemplateAgentDefinition.from_dict(t.name, t.to_dict()) for t in templates}
+
+
+async def get_template_agent(name: str) -> TemplateAgentDefinition | None:
+    """Get a template agent by name from database."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        repo = AgentRepository(session)
+        template = await repo.get_template_agent_by_name(name)
+        if template:
+            return TemplateAgentDefinition.from_dict(template.name, template.to_dict())
+    return None
+
+
+async def list_enabled_templates() -> list[TemplateAgentDefinition]:
+    """List all enabled template agents from database."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        repo = AgentRepository(session)
+        templates = await repo.list_template_agents(enabled_only=True)
+        return [TemplateAgentDefinition.from_dict(t.name, t.to_dict()) for t in templates]
+
+
+# =============================================================================
+# Planning configuration (database-backed)
+# =============================================================================
+
+
+async def get_planning_config() -> dict:
+    """Get the planning configuration from database."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        repo = ConfigRepository(session)
+        return await repo.get_planning_config()
+
+
+async def is_dynamic_mode() -> bool:
+    """Check if dynamic mode is enabled from database."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        repo = ConfigRepository(session)
+        return await repo.is_dynamic_mode()
+
+
+async def should_prefer_templates() -> bool:
+    """Check if templates should be preferred over ad-hoc agents from database."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        repo = ConfigRepository(session)
+        return await repo.should_prefer_templates()
+
+
+# =============================================================================
+# Initialization
+# =============================================================================
+
+
+async def initialize_registries() -> None:
+    """Initialize registries and database with default configuration."""
+    # Initialize database with default configs
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        repo = ConfigRepository(session)
+        await repo.initialize_defaults()
+
+    logger.info("registries_initialized", storage="database")
 
 
 def register_all_tools() -> None:
@@ -889,17 +823,7 @@ def create_tool_definition(
     description: str,
     **kwargs,
 ) -> ToolDefinition:
-    """
-    Create a new tool definition.
-
-    Args:
-        name: Tool name
-        description: Tool description
-        **kwargs: Additional fields
-
-    Returns:
-        ToolDefinition instance
-    """
+    """Create a new tool definition."""
     return ToolDefinition(
         id=f"tool_{uuid4().hex[:12]}",
         name=name,
@@ -914,18 +838,7 @@ def create_agent_definition(
     capabilities: list[str],
     **kwargs,
 ) -> AgentDefinition:
-    """
-    Create a new agent definition.
-
-    Args:
-        name: Agent name
-        description: Agent description
-        capabilities: Agent capabilities
-        **kwargs: Additional fields
-
-    Returns:
-        AgentDefinition instance
-    """
+    """Create a new agent definition."""
     return AgentDefinition(
         id=f"agent_{uuid4().hex[:12]}",
         name=name,

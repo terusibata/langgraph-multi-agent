@@ -1,13 +1,15 @@
-"""Thread management service."""
+"""Thread management service with database persistence."""
 
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Literal, Any
 from uuid import uuid4
 
 import structlog
 
 from src.agents.state import ThreadState
 from src.config import get_settings
+from src.models.base import get_session_factory
+from src.repositories.thread import ThreadRepository
 
 logger = structlog.get_logger()
 
@@ -20,48 +22,71 @@ class ThreadInfo:
         thread_id: str,
         tenant_id: str,
         status: Literal["active", "warning", "locked"] = "active",
+        created_at: datetime | None = None,
+        updated_at: datetime | None = None,
+        total_tokens_used: int = 0,
+        total_cost_usd: float = 0.0,
+        message_count: int = 0,
+        context_tokens_used: int = 0,
+        metadata: dict | None = None,
     ):
         self.thread_id = thread_id
         self.tenant_id = tenant_id
         self.status = status
-        self.created_at = datetime.now(timezone.utc)
-        self.updated_at = datetime.now(timezone.utc)
-        self.total_tokens_used = 0
-        self.total_cost_usd = 0.0
-        self.message_count = 0
-        self.context_tokens_used = 0
-        self.metadata: dict = {}
+        self.created_at = created_at or datetime.now(timezone.utc)
+        self.updated_at = updated_at or datetime.now(timezone.utc)
+        self.total_tokens_used = total_tokens_used
+        self.total_cost_usd = total_cost_usd
+        self.message_count = message_count
+        self.context_tokens_used = context_tokens_used
+        self.metadata = metadata or {}
+
+    @classmethod
+    def from_model(cls, model: Any) -> "ThreadInfo":
+        """Create ThreadInfo from database model."""
+        return cls(
+            thread_id=model.thread_id,
+            tenant_id=model.tenant_id,
+            status=model.status,
+            created_at=model.created_at,
+            updated_at=model.updated_at,
+            total_tokens_used=model.total_tokens_used,
+            total_cost_usd=model.total_cost_usd,
+            message_count=model.message_count,
+            context_tokens_used=model.context_tokens_used,
+            metadata=model.metadata_,
+        )
 
 
 class ThreadManager:
     """
-    Manager for conversation threads.
+    Manager for conversation threads with database persistence.
 
     Handles thread lifecycle, status tracking, and context management.
+    All data is stored in PostgreSQL database.
     """
 
     def __init__(self):
         """Initialize the manager."""
         self.settings = get_settings()
-        # In-memory storage for development
-        # In production, this would use database
-        self._threads: dict[str, ThreadInfo] = {}
 
-    async def create_thread(self, tenant_id: str) -> str:
+    async def create_thread(self, tenant_id: str, metadata: dict | None = None) -> str:
         """
-        Create a new thread.
+        Create a new thread in database.
 
         Args:
             tenant_id: Tenant identifier
+            metadata: Optional metadata
 
         Returns:
             New thread ID
         """
         thread_id = f"thread_{uuid4().hex[:12]}"
-        self._threads[thread_id] = ThreadInfo(
-            thread_id=thread_id,
-            tenant_id=tenant_id,
-        )
+
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            repo = ThreadRepository(session)
+            await repo.create_thread(thread_id, tenant_id, metadata)
 
         logger.info(
             "thread_created",
@@ -73,7 +98,7 @@ class ThreadManager:
 
     async def get_thread(self, thread_id: str) -> ThreadInfo | None:
         """
-        Get thread information.
+        Get thread information from database.
 
         Args:
             thread_id: Thread identifier
@@ -81,7 +106,13 @@ class ThreadManager:
         Returns:
             ThreadInfo or None if not found
         """
-        return self._threads.get(thread_id)
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            repo = ThreadRepository(session)
+            model = await repo.get_thread(thread_id)
+            if model:
+                return ThreadInfo.from_model(model)
+        return None
 
     async def get_thread_state(self, thread_id: str) -> ThreadState | None:
         """
@@ -148,55 +179,63 @@ class ThreadManager:
         Returns:
             Updated ThreadState
         """
-        thread = await self.get_thread(thread_id)
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            repo = ThreadRepository(session)
+            thread = await repo.get_thread(thread_id)
 
-        if not thread:
-            # Create new thread record
-            thread = ThreadInfo(
-                thread_id=thread_id,
-                tenant_id="unknown",
+            if not thread:
+                # Create new thread record
+                thread = await repo.create_thread(thread_id, "unknown")
+
+            # Update metrics
+            new_total = thread.total_tokens_used + input_tokens + output_tokens
+            new_cost = thread.total_cost_usd + cost_usd
+            new_count = thread.message_count + 1
+            new_context = thread.context_tokens_used + input_tokens + output_tokens
+
+            # Calculate usage and determine status
+            usage_percent = (new_context / self.settings.context_max_tokens) * 100
+
+            if usage_percent >= self.settings.context_lock_threshold:
+                new_status = "locked"
+            elif usage_percent >= self.settings.context_warning_threshold:
+                new_status = "warning"
+            else:
+                new_status = "active"
+
+            # Update in database
+            await repo.update_thread(
+                thread_id,
+                {
+                    "total_tokens_used": new_total,
+                    "total_cost_usd": new_cost,
+                    "message_count": new_count,
+                    "context_tokens_used": new_context,
+                    "status": new_status,
+                },
             )
-            self._threads[thread_id] = thread
-
-        # Update metrics
-        thread.total_tokens_used += input_tokens + output_tokens
-        thread.total_cost_usd += cost_usd
-        thread.message_count += 1
-        thread.context_tokens_used += input_tokens + output_tokens
-        thread.updated_at = datetime.now(timezone.utc)
-
-        # Update status based on context usage
-        usage_percent = (
-            thread.context_tokens_used / self.settings.context_max_tokens
-        ) * 100
-
-        if usage_percent >= self.settings.context_lock_threshold:
-            thread.status = "locked"
-        elif usage_percent >= self.settings.context_warning_threshold:
-            thread.status = "warning"
-        else:
-            thread.status = "active"
 
         logger.debug(
             "thread_metrics_updated",
             thread_id=thread_id,
-            total_tokens=thread.total_tokens_used,
+            total_tokens=new_total,
             context_usage=f"{usage_percent:.1f}%",
-            status=thread.status,
+            status=new_status,
         )
 
         return ThreadState(
-            status=thread.status,
-            context_tokens_used=thread.context_tokens_used,
+            status=new_status,
+            context_tokens_used=new_context,
             context_max_tokens=self.settings.context_max_tokens,
-            message_count=thread.message_count,
-            thread_total_tokens=thread.total_tokens_used,
-            thread_total_cost_usd=thread.total_cost_usd,
+            message_count=new_count,
+            thread_total_tokens=new_total,
+            thread_total_cost_usd=new_cost,
         )
 
     async def delete_thread(self, thread_id: str) -> bool:
         """
-        Delete a thread.
+        Delete a thread from database.
 
         Args:
             thread_id: Thread identifier
@@ -204,11 +243,14 @@ class ThreadManager:
         Returns:
             True if deleted, False if not found
         """
-        if thread_id in self._threads:
-            del self._threads[thread_id]
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            repo = ThreadRepository(session)
+            deleted = await repo.delete_thread(thread_id)
+
+        if deleted:
             logger.info("thread_deleted", thread_id=thread_id)
-            return True
-        return False
+        return deleted
 
     async def list_threads(
         self,
@@ -217,7 +259,7 @@ class ThreadManager:
         limit: int = 50,
     ) -> list[ThreadInfo]:
         """
-        List threads for a tenant.
+        List threads for a tenant from database.
 
         Args:
             tenant_id: Tenant identifier
@@ -227,16 +269,35 @@ class ThreadManager:
         Returns:
             List of ThreadInfo
         """
-        threads = [
-            t for t in self._threads.values()
-            if t.tenant_id == tenant_id
-            and (status is None or t.status == status)
-        ]
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            repo = ThreadRepository(session)
+            threads = await repo.list_threads(tenant_id, status, limit)
+            return [ThreadInfo.from_model(t) for t in threads]
 
-        # Sort by updated_at descending
-        threads.sort(key=lambda t: t.updated_at, reverse=True)
+    async def get_or_create_thread(
+        self,
+        thread_id: str | None,
+        tenant_id: str,
+    ) -> tuple[str, bool]:
+        """
+        Get existing thread or create new one.
 
-        return threads[:limit]
+        Args:
+            thread_id: Optional existing thread ID
+            tenant_id: Tenant identifier
+
+        Returns:
+            Tuple of (thread_id, is_new)
+        """
+        if thread_id:
+            thread = await self.get_thread(thread_id)
+            if thread:
+                return thread_id, False
+
+        # Create new thread
+        new_thread_id = await self.create_thread(tenant_id)
+        return new_thread_id, True
 
 
 # Global thread manager
@@ -249,3 +310,9 @@ def get_thread_manager() -> ThreadManager:
     if _thread_manager is None:
         _thread_manager = ThreadManager()
     return _thread_manager
+
+
+def reset_thread_manager() -> None:
+    """Reset thread manager (useful for testing)."""
+    global _thread_manager
+    _thread_manager = None

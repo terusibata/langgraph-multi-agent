@@ -10,6 +10,7 @@ import structlog
 from src.api.routes import agent_router, threads_router, health_router, admin_router
 from src.agents.registry import initialize_registries, register_all_tools, register_all_agents
 from src.config import get_settings
+from src.models import init_db, close_db
 from src import __version__
 
 # Configure structured logging
@@ -48,12 +49,20 @@ async def lifespan(app: FastAPI):
         aws_region=settings.aws_region,
     )
 
-    # Initialize registries and register agents/tools
+    # Initialize database tables
     try:
-        initialize_registries()
+        await init_db()
+        logger.info("database_initialized")
+    except Exception as e:
+        logger.error("database_initialization_failed", error=str(e))
+        raise
+
+    # Initialize registries with database configuration
+    try:
+        await initialize_registries()
         register_all_tools()
         register_all_agents()
-        logger.info("registries_initialized")
+        logger.info("registries_initialized", storage="database")
     except Exception as e:
         logger.error("registry_initialization_failed", error=str(e))
 
@@ -61,6 +70,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("application_shutting_down")
+    await close_db()
 
 
 def create_app() -> FastAPI:

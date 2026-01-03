@@ -195,14 +195,14 @@ class LLMCallMetric(BaseModel):
     input_tokens: int = Field(default=0)
     output_tokens: int = Field(default=0)
     cost_usd: float = Field(default=0.0)
-    timestamp: datetime = Field(default_factory=datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class SessionMetrics(BaseModel):
     """Metrics for the entire session."""
 
     session_id: str = Field(default_factory=lambda: f"sess_{uuid4().hex[:12]}")
-    started_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     completed_at: datetime | None = None
     duration_ms: int = Field(default=0)
     llm_calls: list[LLMCallMetric] = Field(default_factory=list)
@@ -225,7 +225,7 @@ class SessionMetrics(BaseModel):
 
     def finalize(self) -> None:
         """Finalize metrics calculation."""
-        self.completed_at = datetime.now(timezone.utc)()
+        self.completed_at = datetime.now(timezone.utc)
         if self.started_at:
             delta = self.completed_at - self.started_at
             self.duration_ms = int(delta.total_seconds() * 1000)

@@ -286,23 +286,27 @@ async def get_admin_stats(
 
     # Tool stats
     static_tools = len(tool_registry.list_all())
-    dynamic_tools = len(tool_registry.list_all_definitions())
-    enabled_dynamic_tools = len(tool_registry.list_enabled_definitions())
+    dynamic_tools_list = await tool_registry.list_all_definitions()
+    enabled_dynamic_tools_list = await tool_registry.list_enabled_definitions()
+    dynamic_tools = len(dynamic_tools_list)
+    enabled_dynamic_tools = len(enabled_dynamic_tools_list)
 
     # Agent stats
     static_agents = len(agent_registry.list_all())
-    dynamic_agents = len(agent_registry.list_all_definitions())
-    enabled_dynamic_agents = len(agent_registry.list_enabled_definitions())
+    dynamic_agents_list = await agent_registry.list_all_definitions()
+    enabled_dynamic_agents_list = await agent_registry.list_enabled_definitions()
+    dynamic_agents = len(dynamic_agents_list)
+    enabled_dynamic_agents = len(enabled_dynamic_agents_list)
 
     # Category breakdown for tools
     tool_categories = {}
-    for tool in tool_registry.list_all_definitions():
+    for tool in dynamic_tools_list:
         category = tool.category or "general"
         tool_categories[category] = tool_categories.get(category, 0) + 1
 
     # Capability breakdown for agents
     agent_capabilities = {}
-    for agent in agent_registry.list_all_definitions():
+    for agent in dynamic_agents_list:
         for cap in agent.capabilities:
             agent_capabilities[cap] = agent_capabilities.get(cap, 0) + 1
 
@@ -340,15 +344,13 @@ async def export_definitions(
 
     if include_tools:
         tool_registry = get_tool_registry()
-        result["tools"] = [
-            t.to_dict() for t in tool_registry.list_all_definitions()
-        ]
+        tools_list = await tool_registry.list_all_definitions()
+        result["tools"] = [t.to_dict() for t in tools_list]
 
     if include_agents:
         agent_registry = get_agent_registry()
-        result["agents"] = [
-            a.to_dict() for a in agent_registry.list_all_definitions()
-        ]
+        agents_list = await agent_registry.list_all_definitions()
+        result["agents"] = [a.to_dict() for a in agents_list]
 
     logger.info(
         "definitions_exported",

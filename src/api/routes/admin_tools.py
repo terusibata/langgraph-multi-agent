@@ -47,9 +47,9 @@ async def list_tool_definitions(
 
     # Get all definitions
     if enabled_only:
-        definitions = registry.list_enabled_definitions()
+        definitions = await registry.list_enabled_definitions()
     else:
-        definitions = registry.list_all_definitions()
+        definitions = await registry.list_all_definitions()
 
     # Filter by category
     if category:
@@ -89,7 +89,8 @@ async def create_tool(
     registry = get_tool_registry()
 
     # Check if name already exists
-    if registry.get(body.name) or registry.get_definition(body.name):
+    existing_def = await registry.get_definition(body.name)
+    if registry.get(body.name) or existing_def:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Tool '{body.name}' already exists",
@@ -139,12 +140,12 @@ async def get_tool(
     """Get a specific tool definition by name."""
     registry = get_tool_registry()
 
-    definition = registry.get_definition(tool_name)
+    definition = await registry.get_definition(tool_name)
     if not definition:
         # Check if it's a static tool
         static_tool = registry.get(tool_name)
         if static_tool:
-            info = registry.get_tool_info(tool_name)
+            info = await registry.get_tool_info(tool_name)
             return ToolDefinitionResponse(**info)
 
         raise HTTPException(
@@ -248,7 +249,7 @@ async def test_tool(
     registry = get_tool_registry()
 
     # Get tool definition
-    definition = registry.get_definition(tool_name)
+    definition = await registry.get_definition(tool_name)
     if not definition:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
