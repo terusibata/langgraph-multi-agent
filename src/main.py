@@ -10,6 +10,7 @@ import structlog
 from src.api.routes import agent_router, threads_router, health_router, admin_router
 from src.agents.registry import initialize_registries, register_all_tools, register_all_agents
 from src.config import get_settings
+from src.db import init_db_pool, close_db_pool
 from src import __version__
 
 # Configure structured logging
@@ -48,6 +49,14 @@ async def lifespan(app: FastAPI):
         aws_region=settings.aws_region,
     )
 
+    # Initialize database pool
+    try:
+        await init_db_pool()
+        logger.info("database_pool_initialized")
+    except Exception as e:
+        logger.error("database_initialization_failed", error=str(e))
+        raise
+
     # Initialize registries and register agents/tools
     try:
         initialize_registries()
@@ -61,6 +70,13 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("application_shutting_down")
+
+    # Close database pool
+    try:
+        await close_db_pool()
+        logger.info("database_pool_closed")
+    except Exception as e:
+        logger.error("database_close_failed", error=str(e))
 
 
 def create_app() -> FastAPI:

@@ -43,9 +43,9 @@ async def list_agent_definitions(
 
     # Get all definitions
     if enabled_only:
-        definitions = registry.list_enabled_definitions()
+        definitions = await registry.list_enabled_definitions()
     else:
-        definitions = registry.list_all_definitions()
+        definitions = await registry.list_all_definitions()
 
     # Filter by capability
     if capability:
@@ -85,7 +85,7 @@ async def create_agent(
     registry = get_agent_registry()
 
     # Check if name already exists
-    if registry.get(body.name) or registry.get_definition(body.name):
+    if registry.get(body.name) or await registry.get_definition(body.name):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Agent '{body.name}' already exists",
@@ -135,12 +135,12 @@ async def get_agent(
     """Get a specific agent definition by name."""
     registry = get_agent_registry()
 
-    definition = registry.get_definition(agent_name)
+    definition = await registry.get_definition(agent_name)
     if not definition:
         # Check if it's a static agent
         static_agent = registry.get(agent_name)
         if static_agent:
-            info = registry.get_agent_info(agent_name)
+            info = await registry.get_agent_info(agent_name)
             return AgentDefinitionResponse(**info)
 
         raise HTTPException(

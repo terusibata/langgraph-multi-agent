@@ -413,7 +413,7 @@ class DynamicToolFactory:
         return DynamicTool(definition)
 
     @staticmethod
-    def create_from_name(name: str) -> DynamicTool | None:
+    async def create_from_name(name: str) -> DynamicTool | None:
         """
         Create a DynamicTool from a registered definition name.
 
@@ -424,7 +424,7 @@ class DynamicToolFactory:
             DynamicTool instance or None if not found
         """
         registry = get_tool_registry()
-        definition = registry.get_definition(name)
+        definition = await registry.get_definition(name)
         if not definition:
             return None
         return DynamicTool(definition)

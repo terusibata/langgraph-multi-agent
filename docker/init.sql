@@ -62,3 +62,63 @@ CREATE TRIGGER update_threads_updated_at
     BEFORE UPDATE ON threads
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
+
+-- Create dynamic tools table
+CREATE TABLE IF NOT EXISTS dynamic_tools (
+    id UUID PRIMARY KEY,
+    name VARCHAR(255) UNIQUE NOT NULL,
+    description TEXT NOT NULL,
+    category VARCHAR(100) DEFAULT 'general',
+    parameters JSONB DEFAULT '[]'::jsonb,
+    executor JSONB DEFAULT '{}'::jsonb,
+    required_service_token VARCHAR(255),
+    timeout_seconds INTEGER DEFAULT 30,
+    enabled BOOLEAN DEFAULT TRUE,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_by VARCHAR(255)
+);
+
+-- Create indexes for dynamic_tools
+CREATE INDEX IF NOT EXISTS idx_dynamic_tools_name ON dynamic_tools(name);
+CREATE INDEX IF NOT EXISTS idx_dynamic_tools_category ON dynamic_tools(category);
+CREATE INDEX IF NOT EXISTS idx_dynamic_tools_enabled ON dynamic_tools(enabled);
+CREATE INDEX IF NOT EXISTS idx_dynamic_tools_created_at ON dynamic_tools(created_at DESC);
+
+-- Trigger for dynamic_tools table
+DROP TRIGGER IF EXISTS update_dynamic_tools_updated_at ON dynamic_tools;
+CREATE TRIGGER update_dynamic_tools_updated_at
+    BEFORE UPDATE ON dynamic_tools
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Create dynamic agents table
+CREATE TABLE IF NOT EXISTS dynamic_agents (
+    id UUID PRIMARY KEY,
+    name VARCHAR(255) UNIQUE NOT NULL,
+    description TEXT NOT NULL,
+    capabilities JSONB DEFAULT '[]'::jsonb,
+    tools JSONB DEFAULT '[]'::jsonb,
+    executor JSONB DEFAULT '{"type": "llm"}'::jsonb,
+    retry_strategy JSONB DEFAULT '{"max_attempts": 3, "retry_conditions": ["no_results"], "query_modification": "synonym", "backoff_seconds": 0.5}'::jsonb,
+    priority INTEGER DEFAULT 0,
+    enabled BOOLEAN DEFAULT TRUE,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_by VARCHAR(255)
+);
+
+-- Create indexes for dynamic_agents
+CREATE INDEX IF NOT EXISTS idx_dynamic_agents_name ON dynamic_agents(name);
+CREATE INDEX IF NOT EXISTS idx_dynamic_agents_enabled ON dynamic_agents(enabled);
+CREATE INDEX IF NOT EXISTS idx_dynamic_agents_priority ON dynamic_agents(priority DESC);
+CREATE INDEX IF NOT EXISTS idx_dynamic_agents_created_at ON dynamic_agents(created_at DESC);
+
+-- Trigger for dynamic_agents table
+DROP TRIGGER IF EXISTS update_dynamic_agents_updated_at ON dynamic_agents;
+CREATE TRIGGER update_dynamic_agents_updated_at
+    BEFORE UPDATE ON dynamic_agents
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
