@@ -544,11 +544,74 @@ langgraph-multi-agent-backend/
 | `AWS_REGION` | ✓ | `us-east-1` | AWSリージョン |
 | `AWS_ACCESS_KEY_ID` | ✓ | - | AWS認証用アクセスキーID |
 | `AWS_SECRET_ACCESS_KEY` | ✓ | - | AWS認証用シークレットアクセスキー |
+| `HTTP_PROXY` | - | - | HTTPプロキシURL（例: `http://proxy.example.com:8080`） |
+| `HTTPS_PROXY` | - | - | HTTPSプロキシURL（例: `https://proxy.example.com:8080`） |
+| `PROXY_CA_BUNDLE` | - | - | プロキシ用カスタムCA証明書バンドルのパス |
+| `PROXY_CLIENT_CERT` | - | - | プロキシ認証用クライアント証明書のパス |
+| `PROXY_USE_FORWARDING_FOR_HTTPS` | - | `true` | HTTPSプロキシにCONNECTメソッドを使用 |
 | `ACCESS_KEY_SECRET` | ✓ | - | アクセスキー署名用 |
 | `DEFAULT_MODEL_ID` | - | `anthropic.claude-3-5-sonnet-20241022-v2:0` | MainAgentデフォルト |
 | `SUB_AGENT_MODEL_ID` | - | `anthropic.claude-3-5-haiku-20241022-v1:0` | SubAgentモデル |
 | `CONTEXT_WARNING_THRESHOLD` | - | `80` | 警告閾値（%） |
 | `CONTEXT_LOCK_THRESHOLD` | - | `95` | ロック閾値（%） |
+
+## プロキシ設定
+
+このシステムは、企業プロキシ環境下での動作をサポートしています。HTTP/HTTPSプロキシ経由でAWS Bedrockへのアクセスが可能です。
+
+### 基本設定
+
+環境変数で簡単にプロキシを設定できます：
+
+```bash
+# .env ファイルに追加
+HTTP_PROXY=http://proxy.example.com:8080
+HTTPS_PROXY=https://proxy.example.com:8080
+```
+
+### 高度な設定
+
+企業環境で証明書認証が必要な場合：
+
+```bash
+# カスタムCA証明書を使用
+PROXY_CA_BUNDLE=/path/to/corporate-ca-bundle.crt
+
+# クライアント証明書認証
+PROXY_CLIENT_CERT=/path/to/client-certificate.pem
+
+# HTTPS接続にCONNECTメソッドを使用（デフォルト: true）
+PROXY_USE_FORWARDING_FOR_HTTPS=true
+```
+
+### プロキシ設定の動作
+
+- プロキシ設定は、AWS Bedrock APIへの全てのHTTP/HTTPS接続に適用されます
+- boto3の`Config`オブジェクトを通じて設定され、LangChain経由のBedrock呼び出しにも適用されます
+- プロキシが設定されている場合、起動時にログに記録されます
+- プロキシ設定が不要な場合は、環境変数を設定しなければデフォルトの直接接続が使用されます
+
+### 動作確認
+
+プロキシ経由で正しく動作しているか確認する方法：
+
+1. アプリケーション起動時のログを確認：
+   ```
+   {"event": "boto3_proxy_configured", "http_proxy": "http://proxy.example.com:8080", ...}
+   ```
+
+2. ヘルスチェックエンドポイントで確認：
+   ```bash
+   curl http://localhost:8000/health
+   ```
+
+3. 簡単なエージェント呼び出しをテスト：
+   ```bash
+   curl -X POST http://localhost:8000/api/v1/agent/invoke \
+     -H "X-Access-Key: ${ACCESS_KEY}" \
+     -H "Content-Type: application/json" \
+     -d '{"message": "Hello"}'
+   ```
 
 ## プロンプトキャッシュ
 
