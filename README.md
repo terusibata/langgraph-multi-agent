@@ -15,6 +15,18 @@ Next.jsアプリケーションからのみアクセスされ、LangGraphによ�
 - **会社コンテキストの送信**: 各企業のビジョン、社内用語、参考情報などをリクエスト時に送信可能
 - **動的なエージェント/ツール定義**: Admin API経由で、各企業ごとにエージェントやツールを動的に登録・管理
 
+### データベースストレージ
+
+**全てのデータはPostgreSQLデータベースに永続化されます：**
+
+- **エージェント定義**: 動的エージェントの設定はデータベースに保存
+- **ツール定義**: 動的ツールの設定はデータベースに保存
+- **スレッド管理**: 会話スレッドとコンテキスト情報をデータベースで管理
+- **実行結果**: セッション、実行計画、SubAgent実行結果を完全に保存
+- **設定**: プランニングモード、実行設定などのシステム設定もデータベースで管理
+
+メモリ管理は完全に廃止され、全ての状態はデータベースで管理されます。
+
 #### 会社コンテキストの活用
 
 各リクエストに会社固有の情報を含めることで、エージェントの応答を企業文化に合わせてカスタマイズできます：
@@ -52,6 +64,7 @@ Next.jsアプリケーションからのみアクセスされ、LangGraphによ�
 - **テンプレートエージェント**: よく使うパターンを事前定義して再利用
 - **トークン管理**: 二層トークン構造（アクセスキー + サービストークン）
 - **動的エージェント/ツール管理**: API経由でエージェントやツールを動的に追加・変更・削除
+- **データベース永続化**: 全ての状態・定義・実行結果をPostgreSQLに保存
 - **OpenAPIサポート**: OpenAPI仕様からツールを自動生成・登録
 - **プロンプトキャッシュ**: AWS Bedrock Prompt Cachingによるコスト削減とレイテンシ改善
 
@@ -84,11 +97,19 @@ Next.jsアプリケーションからのみアクセスされ、LangGraphによ�
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                            Tool Registry                                     │
 │                                                                             │
-│  静的ツール (Python実装)         │  動的ツール (API経由で定義)              │
+│  静的ツール (Python実装)         │  動的ツール (DB定義)                      │
 │  - servicenow_knowledge_search  │  - weather_lookup                        │
 │  - servicenow_case_search       │  - external_api_call                     │
 │  - vector_db_search             │  - custom_http_tool                      │
 │  - catalog_list                 │  - ...                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            PostgreSQL Database                               │
+│                                                                             │
+│  agents        │  tools         │  threads      │  execution_sessions      │
+│  template_agents                 │  execution_results  │  system_config   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -98,11 +119,16 @@ Next.jsアプリケーションからのみアクセスされ、LangGraphによ�
 
 MainAgentが利用可能なツールを分析し、タスクに最適なエージェントをその場で生成します。
 
-```yaml
-# config/agents.yaml
-planning:
-  dynamic_mode: true
-  prefer_templates: true  # テンプレートがあれば優先
+設定はデータベースの `system_config` テーブルで管理されます：
+
+```json
+{
+  "key": "planning",
+  "value": {
+    "dynamic_mode": true,
+    "prefer_templates": true
+  }
+}
 ```
 
 **動作フロー:**
@@ -113,117 +139,43 @@ planning:
 5. 適切なテンプレートがなければ、Ad-hocエージェントを生成
 6. 並列実行可能なタスクをグループ化
 7. 実行・結果統合
-
-**例: Ad-hocエージェントの生成**
-```
-ユーザー: 「ServiceNowで最近のインシデントと関連するナレッジを調べて」
-
-MainAgentの思考:
-- 必要な能力: incident_search, knowledge_search
-- 関連ツール: servicenow_case_search, servicenow_knowledge_search, vector_db_search
-- テンプレート "comprehensive_search" が適切
-- 並列実行可能
-
-生成される実行計画:
-- Task 1 (Template): knowledge_search (servicenow_knowledge_search, servicenow_case_search)
-- Task 2 (Template): vector_search (vector_db_search)
-- Parallel Group: [Task 1, Task 2]
-```
+8. 実行結果をデータベースに保存
 
 ### Simple Mode
 
 事前定義されたエージェントのみを使用します。
 
-```yaml
-planning:
-  dynamic_mode: false
-```
-
-## テンプレートエージェント
-
-よく使うエージェントパターンを事前定義できます。
-
-```yaml
-# config/agents.yaml
-template_agents:
-  comprehensive_search:
-    enabled: true
-    description: "包括的な検索を実行（ナレッジベース + ベクトル検索）"
-    purpose: "ユーザーの質問に対して、複数のソースから情報を収集"
-    capabilities:
-      - knowledge_search
-      - semantic_search
-    tools:
-      - servicenow_knowledge_search
-      - vector_db_search
-    parallel_execution: true
-    expected_output: "複数ソースからの検索結果とその関連度"
-
-  it_support:
-    enabled: true
-    description: "IT問題のトラブルシューティング"
-    purpose: "IT関連の問題を診断し、解決策を提示"
-    capabilities:
-      - troubleshooting
-      - case_search
-    tools:
-      - servicenow_knowledge_search
-      - servicenow_case_search
-    parallel_execution: false
-    expected_output: "問題の診断結果と推奨される解決手順"
-```
-
-## Ad-hocエージェント
-
-Plannerがタスクに応じて動的に生成するエージェントです。
-
-**AdHocAgentSpec（仕様）:**
-```python
+```json
 {
-    "id": "adhoc_abc123",
-    "name": "custom_search_agent",
-    "purpose": "ServiceNowとベクトルDBを横断して情報を収集",
-    "tools": ["servicenow_knowledge_search", "vector_db_search"],
-    "expected_output": "関連する情報のリストと要約",
-    "reasoning": "ユーザーが包括的な検索を求めているため、両方のツールを使用"
+  "key": "planning",
+  "value": {
+    "dynamic_mode": false
+  }
 }
 ```
 
-**特徴:**
-- 実行時に動的に生成・破棄
-- 必要なツールのみを持つ軽量なエージェント
-- LLMがシステムプロンプトを自動生成
-- リトライロジックも備える
+## データベーススキーマ
 
-## 実行計画の構造
+### テーブル一覧
 
-```python
-ExecutionPlan(
-    tasks=[
-        Task(
-            id="task_0",
-            agent_name="knowledge_search",  # テンプレート使用
-            parameters={"query": "VPN接続エラー"}
-        ),
-        Task(
-            id="task_1",
-            adhoc_spec=AdHocAgentSpec(  # Ad-hoc生成
-                name="adhoc_incident_analyzer",
-                purpose="関連インシデントを分析",
-                tools=["servicenow_case_search"],
-            ),
-            parameters={"query": "VPN インシデント"}
-        ),
-    ],
-    parallel_groups=[
-        ParallelGroup(
-            group_id="search_phase",
-            task_ids=["task_0", "task_1"],
-            timeout_seconds=30
-        )
-    ],
-    execution_order=["search_phase"]
-)
+| テーブル名 | 説明 |
+|-----------|------|
+| `agents` | 動的エージェント定義 |
+| `template_agents` | テンプレートエージェント定義 |
+| `tools` | 動的ツール定義 |
+| `threads` | 会話スレッド |
+| `execution_sessions` | 実行セッション |
+| `execution_results` | SubAgent/ツール実行結果 |
+| `system_config` | システム設定 |
+
+### マイグレーション
+
+```bash
+# マイグレーションを実行
+alembic upgrade head
+
+# 新しいマイグレーションを作成
+alembic revision --autogenerate -m "description"
 ```
 
 ## クイックスタート
@@ -232,6 +184,7 @@ ExecutionPlan(
 
 - Python 3.11+
 - Docker & Docker Compose
+- PostgreSQL 16+
 - AWS credentials（Bedrock アクセス用）
 
 ### セットアップ
@@ -240,7 +193,7 @@ ExecutionPlan(
 
 ```bash
 git clone <repository-url>
-cd langgraph-multi-agent-backend
+cd langgraph-multi-agent
 ```
 
 2. 環境変数を設定:
@@ -257,7 +210,13 @@ cd docker
 docker-compose up -d
 ```
 
-4. ヘルスチェック:
+4. データベースマイグレーションを実行:
+
+```bash
+alembic upgrade head
+```
+
+5. ヘルスチェック:
 
 ```bash
 curl http://localhost:8000/health
@@ -272,6 +231,12 @@ source .venv/bin/activate
 
 # 依存関係をインストール
 pip install -e ".[dev]"
+
+# PostgreSQLを起動（Dockerで）
+cd docker && docker-compose up -d postgres
+
+# マイグレーションを実行
+alembic upgrade head
 
 # 開発サーバーを起動
 python -m src.main
@@ -310,25 +275,23 @@ python -m src.main
 
 | メソッド | パス | 説明 |
 |---------|------|------|
-| GET | `/api/v1/admin/tools` | ツール定義一覧取得 |
-| POST | `/api/v1/admin/tools` | ツール定義作成 |
+| GET | `/api/v1/admin/tools` | ツール定義一覧取得（DBから） |
+| POST | `/api/v1/admin/tools` | ツール定義作成（DBに保存） |
 | GET | `/api/v1/admin/tools/{name}` | ツール定義取得 |
 | PUT | `/api/v1/admin/tools/{name}` | ツール定義更新 |
 | DELETE | `/api/v1/admin/tools/{name}` | ツール定義削除 |
 | POST | `/api/v1/admin/tools/{name}/test` | ツール実行テスト |
-| POST | `/api/v1/admin/tools/bulk` | 一括操作（有効化/無効化/削除） |
 
 ### 動的エージェント管理（Admin API）
 
 | メソッド | パス | 説明 |
 |---------|------|------|
-| GET | `/api/v1/admin/agents` | エージェント定義一覧取得 |
-| POST | `/api/v1/admin/agents` | エージェント定義作成 |
+| GET | `/api/v1/admin/agents` | エージェント定義一覧取得（DBから） |
+| POST | `/api/v1/admin/agents` | エージェント定義作成（DBに保存） |
 | GET | `/api/v1/admin/agents/{name}` | エージェント定義取得 |
 | PUT | `/api/v1/admin/agents/{name}` | エージェント定義更新 |
 | DELETE | `/api/v1/admin/agents/{name}` | エージェント定義削除 |
-| POST | `/api/v1/admin/agents/{name}/test` | エージェント実行テスト |
-| POST | `/api/v1/admin/agents/bulk` | 一括操作（有効化/無効化/削除） |
+| PATCH | `/api/v1/admin/agents/{name}/toggle` | エージェント有効/無効切り替え |
 
 ### OpenAPIインポート（Admin API）
 
@@ -337,13 +300,6 @@ python -m src.main
 | POST | `/api/v1/admin/tools/openapi` | OpenAPI仕様からツール生成・登録 |
 | POST | `/api/v1/admin/tools/openapi/url` | URLからOpenAPI仕様を取得してツール生成 |
 | POST | `/api/v1/admin/tools/openapi/preview` | ツール生成プレビュー（登録なし） |
-
-### インポート/エクスポート（Admin API）
-
-| メソッド | パス | 説明 |
-|---------|------|------|
-| GET | `/api/v1/admin/export` | 全定義をエクスポート |
-| POST | `/api/v1/admin/import` | 定義をインポート |
 
 ## 認証
 
@@ -369,6 +325,28 @@ python -m src.main
 }
 ```
 
+## 実行結果の永続化
+
+全ての実行結果はデータベースに保存され、後から参照可能です：
+
+### execution_sessions テーブル
+
+- セッションID、スレッドID、テナントID
+- ユーザー入力と最終レスポンス
+- 実行計画（JSON）
+- 開始/完了時刻、所要時間
+- トークン使用量、コスト
+- LLM呼び出し詳細
+- エラー情報（発生時）
+
+### execution_results テーブル
+
+- SubAgent/ツール実行結果
+- Ad-hocエージェント仕様（該当する場合）
+- 実行ステータス、データ、エラー
+- リトライ回数、検索バリエーション
+- 実行時間
+
 ## SSE イベント種別
 
 | イベント種別 | タイミング | 含まれるデータ |
@@ -386,15 +364,105 @@ python -m src.main
 | `session_complete` | 正常完了時 | 全メトリクス情報（ad-hoc情報含む） |
 | `error` | エラー発生時 | error詳細 + partial_metrics |
 
+## プロジェクト構成
+
+```
+langgraph-multi-agent/
+├── docker/                      # Docker設定
+├── alembic/                     # DBマイグレーション
+│   ├── versions/                # マイグレーションスクリプト
+│   └── env.py                   # Alembic環境設定
+├── src/
+│   ├── main.py                  # アプリケーションエントリーポイント
+│   ├── config/                  # 設定
+│   │   ├── settings.py          # 環境変数設定
+│   │   └── models.py            # モデル設定
+│   ├── models/                  # データベースモデル
+│   │   ├── base.py              # ベースモデル・セッション管理
+│   │   ├── agent.py             # エージェントモデル
+│   │   ├── tool.py              # ツールモデル
+│   │   ├── thread.py            # スレッドモデル
+│   │   ├── execution.py         # 実行結果モデル
+│   │   └── config.py            # 設定モデル
+│   ├── repositories/            # リポジトリ層
+│   │   ├── agent.py             # エージェントCRUD
+│   │   ├── tool.py              # ツールCRUD
+│   │   ├── thread.py            # スレッドCRUD
+│   │   ├── execution.py         # 実行結果CRUD
+│   │   └── config.py            # 設定CRUD
+│   ├── api/                     # API層
+│   │   ├── routes/              # ルート定義
+│   │   │   ├── agent.py         # エージェント実行API
+│   │   │   ├── threads.py       # スレッド管理API
+│   │   │   ├── health.py        # ヘルスチェックAPI
+│   │   │   ├── admin_agents.py  # エージェント管理Admin API
+│   │   │   └── admin_tools.py   # ツール管理Admin API
+│   │   ├── middleware/          # ミドルウェア
+│   │   └── schemas/             # リクエスト/レスポンススキーマ
+│   ├── agents/                  # エージェント
+│   │   ├── graph.py             # LangGraph定義（DB永続化対応）
+│   │   ├── state.py             # AgentState, AdHocAgentSpec定義
+│   │   ├── registry.py          # Agent/Toolレジストリ（DB対応）
+│   │   ├── main_agent/          # MainAgent
+│   │   │   ├── agent.py         # MainAgent
+│   │   │   ├── planner.py       # 実行計画策定
+│   │   │   ├── router.py        # ルーティング
+│   │   │   ├── evaluator.py     # 中間評価
+│   │   │   └── synthesizer.py   # 応答生成
+│   │   ├── sub_agents/          # SubAgents
+│   │   │   ├── base.py          # 基底クラス
+│   │   │   ├── adhoc.py         # Ad-hocエージェント実行
+│   │   │   ├── dynamic.py       # 動的エージェント実行
+│   │   │   └── ...              # 静的エージェント実装
+│   │   └── tools/               # Tools
+│   │       ├── base.py          # 基底クラス
+│   │       ├── dynamic.py       # 動的ツール実行
+│   │       ├── openapi.py       # OpenAPIパーサー
+│   │       └── ...              # 静的ツール実装
+│   ├── services/                # サービス層
+│   │   ├── llm/                 # LLMサービス
+│   │   ├── execution/           # 実行制御
+│   │   ├── streaming/           # SSEストリーミング
+│   │   ├── metrics/             # メトリクス収集
+│   │   ├── thread/              # スレッド管理（DB対応）
+│   │   └── error/               # エラーハンドリング
+│   └── utils/                   # ユーティリティ
+├── tests/                       # テスト
+├── alembic.ini                  # Alembic設定
+├── pyproject.toml               # プロジェクト設定
+└── requirements.txt             # 依存関係
+```
+
+## 環境変数
+
+| 変数名 | 必須 | デフォルト | 説明 |
+|--------|------|-----------|------|
+| `DATABASE_URL` | ✓ | - | PostgreSQL接続URL（async: `postgresql+asyncpg://...`） |
+| `DATABASE_URL_SYNC` | ✓ | - | PostgreSQL接続URL（sync: `postgresql://...`） |
+| `REDIS_URL` | - | - | Redis接続URL（キャッシュ用） |
+| `AWS_REGION` | ✓ | `us-east-1` | AWSリージョン |
+| `AWS_ACCESS_KEY_ID` | ✓ | - | AWS認証用アクセスキーID |
+| `AWS_SECRET_ACCESS_KEY` | ✓ | - | AWS認証用シークレットアクセスキー |
+| `HTTP_PROXY` | - | - | HTTPプロキシURL |
+| `HTTPS_PROXY` | - | - | HTTPSプロキシURL |
+| `PROXY_CA_BUNDLE` | - | - | プロキシ用カスタムCA証明書バンドルのパス |
+| `PROXY_CLIENT_CERT` | - | - | プロキシ認証用クライアント証明書のパス |
+| `ACCESS_KEY_SECRET` | ✓ | - | アクセスキー署名用 |
+| `DEFAULT_MODEL_ID` | - | `anthropic.claude-3-5-sonnet-20241022-v2:0` | MainAgentデフォルト |
+| `SUB_AGENT_MODEL_ID` | - | `anthropic.claude-3-5-haiku-20241022-v1:0` | SubAgentモデル |
+| `CONTEXT_WARNING_THRESHOLD` | - | `80` | 警告閾値（%） |
+| `CONTEXT_LOCK_THRESHOLD` | - | `95` | ロック閾値（%） |
+
 ## 動的ツール/エージェント管理
 
 ### 概要
 
 静的なPython実装に加えて、API経由で動的にツールやエージェントを追加・変更・削除できます。
+全ての定義はPostgreSQLデータベースに保存され、サーバー再起動後も永続化されます。
 
-- **静的ツール/エージェント**: Pythonコードで実装、デプロイ時に登録
-- **動的ツール/エージェント**: API経由で定義、ランタイムで登録・変更可能
-- **テンプレートエージェント**: YAML設定で定義、よく使うパターンを再利用
+- **静的ツール/エージェント**: Pythonコードで実装、デプロイ時に登録（メモリ内）
+- **動的ツール/エージェント**: API経由で定義、データベースに保存
+- **テンプレートエージェント**: データベースで定義、よく使うパターンを再利用
 - **Ad-hocエージェント**: 実行時にPlannerが動的に生成
 
 ### ツール定義の例
@@ -438,7 +506,7 @@ python -m src.main
   "tools": ["weather_lookup", "forecast_api"],
   "executor": {
     "type": "llm",
-    "system_prompt": "あなたは天気情報の専門家です。ユーザーの質問に基づいて適切な天気情報を提供してください。",
+    "system_prompt": "あなたは天気情報の専門家です。",
     "temperature": 0.0,
     "max_tokens": 2048
   },
@@ -453,263 +521,29 @@ python -m src.main
 }
 ```
 
-### エクゼキュータータイプ
-
-#### ツールエクゼキューター
-
-| タイプ | 説明 | 主な設定 |
-|--------|------|----------|
-| `http` | HTTP APIを呼び出し | `url`, `method`, `headers`, `auth_type` |
-| `python` | Pythonモジュールを実行 | `module_path`, `function_name`, `class_name` |
-| `mock` | モックレスポンスを返却（テスト用） | `mock_response`, `mock_delay_ms` |
-
-#### エージェントエクゼキューター
-
-| タイプ | 説明 | 主な設定 |
-|--------|------|----------|
-| `llm` | LLMによる推論・ツール呼び出し | `model_id`, `system_prompt`, `temperature` |
-| `rule_based` | ルールベースで処理 | `rules` (条件とアクションの配列) |
-| `hybrid` | ルール優先、LLMフォールバック | 両方の設定を併用 |
-
-### OpenAPIからのツールインポート
-
-OpenAPI 3.x仕様からツールを自動生成できます。
-
-```bash
-# JSON仕様を直接送信
-curl -X POST http://localhost:8000/api/v1/admin/tools/openapi \
-  -H "X-Access-Key: ${ACCESS_KEY}" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "spec": { ... OpenAPI仕様 ... },
-    "options": {
-      "prefix": "petstore",
-      "include_tags": ["pets"],
-      "auth_config": {
-        "type": "api_key",
-        "header_name": "X-API-Key",
-        "token_env": "PETSTORE_API_KEY"
-      }
-    }
-  }'
-
-# URLから取得
-curl -X POST http://localhost:8000/api/v1/admin/tools/openapi/url \
-  -H "X-Access-Key: ${ACCESS_KEY}" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "url": "https://petstore.swagger.io/v2/swagger.json",
-    "options": {
-      "prefix": "petstore"
-    }
-  }'
-```
-
-### 必要な権限
-
-Admin APIは以下の権限が必要です（アクセスキーのJWTに含める）:
-
-| 権限 | 説明 |
-|------|------|
-| `admin:tools:read` | ツール定義の参照 |
-| `admin:tools:write` | ツール定義の作成・更新・削除 |
-| `admin:agents:read` | エージェント定義の参照 |
-| `admin:agents:write` | エージェント定義の作成・更新・削除 |
-| `admin:import` | 定義のインポート |
-| `admin:export` | 定義のエクスポート |
-
-## プロジェクト構成
-
-```
-langgraph-multi-agent/
-├── docker/                      # Docker設定
-├── src/
-│   ├── main.py                  # アプリケーションエントリーポイント
-│   ├── config/                  # 設定
-│   │   ├── settings.py          # 環境変数設定
-│   │   ├── models.py            # モデル設定
-│   │   ├── agents.yaml          # エージェント/ツール/テンプレート設定（マルチテナント用テンプレート）
-│   │   └── agents.yaml.example  # 設定例（サンプル定義）
-│   ├── api/                     # API層
-│   │   ├── routes/              # ルート定義
-│   │   │   ├── agent.py         # エージェント実行API
-│   │   │   ├── threads.py       # スレッド管理API
-│   │   │   ├── health.py        # ヘルスチェックAPI
-│   │   │   └── admin.py         # 動的管理Admin API
-│   │   ├── middleware/          # ミドルウェア
-│   │   └── schemas/             # リクエスト/レスポンススキーマ
-│   ├── agents/                  # エージェント
-│   │   ├── graph.py             # LangGraph定義（dynamic mode対応）
-│   │   ├── state.py             # AgentState, AdHocAgentSpec定義
-│   │   ├── registry.py          # Agent/Tool/Templateレジストリ
-│   │   ├── main_agent/          # MainAgent
-│   │   │   ├── agent.py         # MainAgent（dynamic mode対応）
-│   │   │   ├── planner.py       # 実行計画策定（Ad-hoc生成対応）
-│   │   │   ├── router.py        # ルーティング
-│   │   │   ├── evaluator.py     # 中間評価
-│   │   │   └── synthesizer.py   # 応答生成
-│   │   ├── sub_agents/          # SubAgents
-│   │   │   ├── base.py          # 基底クラス
-│   │   │   ├── adhoc.py         # Ad-hocエージェント実行
-│   │   │   ├── dynamic.py       # 動的エージェント実行
-│   │   │   └── ...              # 静的エージェント実装
-│   │   └── tools/               # Tools
-│   │       ├── base.py          # 基底クラス
-│   │       ├── dynamic.py       # 動的ツール実行
-│   │       ├── openapi.py       # OpenAPIパーサー/ジェネレーター
-│   │       └── ...              # 静的ツール実装
-│   ├── services/                # サービス層
-│   │   ├── llm/                 # LLMサービス
-│   │   ├── execution/           # 実行制御
-│   │   │   └── parallel.py      # 並列実行（Ad-hoc対応）
-│   │   ├── streaming/           # SSEストリーミング
-│   │   ├── metrics/             # メトリクス収集
-│   │   ├── thread/              # スレッド管理
-│   │   └── error/               # エラーハンドリング
-│   └── utils/                   # ユーティリティ
-├── tests/                       # テスト
-├── alembic/                     # DBマイグレーション
-├── pyproject.toml               # プロジェクト設定
-└── requirements.txt             # 依存関係
-```
-
-## 環境変数
-
-| 変数名 | 必須 | デフォルト | 説明 |
-|--------|------|-----------|------|
-| `DATABASE_URL` | ✓ | - | PostgreSQL接続URL |
-| `REDIS_URL` | ✓ | - | Redis接続URL |
-| `AWS_REGION` | ✓ | `us-east-1` | AWSリージョン |
-| `AWS_ACCESS_KEY_ID` | ✓ | - | AWS認証用アクセスキーID |
-| `AWS_SECRET_ACCESS_KEY` | ✓ | - | AWS認証用シークレットアクセスキー |
-| `HTTP_PROXY` | - | - | HTTPプロキシURL（例: `http://proxy.example.com:8080`） |
-| `HTTPS_PROXY` | - | - | HTTPSプロキシURL（例: `https://proxy.example.com:8080`） |
-| `PROXY_CA_BUNDLE` | - | - | プロキシ用カスタムCA証明書バンドルのパス |
-| `PROXY_CLIENT_CERT` | - | - | プロキシ認証用クライアント証明書のパス |
-| `PROXY_USE_FORWARDING_FOR_HTTPS` | - | `true` | HTTPSプロキシにCONNECTメソッドを使用 |
-| `ACCESS_KEY_SECRET` | ✓ | - | アクセスキー署名用 |
-| `DEFAULT_MODEL_ID` | - | `anthropic.claude-3-5-sonnet-20241022-v2:0` | MainAgentデフォルト |
-| `SUB_AGENT_MODEL_ID` | - | `anthropic.claude-3-5-haiku-20241022-v1:0` | SubAgentモデル |
-| `CONTEXT_WARNING_THRESHOLD` | - | `80` | 警告閾値（%） |
-| `CONTEXT_LOCK_THRESHOLD` | - | `95` | ロック閾値（%） |
-
-## プロキシ設定
-
-このシステムは、企業プロキシ環境下での動作をサポートしています。HTTP/HTTPSプロキシ経由でAWS Bedrockへのアクセスが可能です。
-
-### 基本設定
-
-環境変数で簡単にプロキシを設定できます：
-
-```bash
-# .env ファイルに追加
-HTTP_PROXY=http://proxy.example.com:8080
-HTTPS_PROXY=https://proxy.example.com:8080
-```
-
-### 高度な設定
-
-企業環境で証明書認証が必要な場合：
-
-```bash
-# カスタムCA証明書を使用
-PROXY_CA_BUNDLE=/path/to/corporate-ca-bundle.crt
-
-# クライアント証明書認証
-PROXY_CLIENT_CERT=/path/to/client-certificate.pem
-
-# HTTPS接続にCONNECTメソッドを使用（デフォルト: true）
-PROXY_USE_FORWARDING_FOR_HTTPS=true
-```
-
-### プロキシ設定の動作
-
-- プロキシ設定は、AWS Bedrock APIへの全てのHTTP/HTTPS接続に適用されます
-- boto3の`Config`オブジェクトを通じて設定され、LangChain経由のBedrock呼び出しにも適用されます
-- プロキシが設定されている場合、起動時にログに記録されます
-- プロキシ設定が不要な場合は、環境変数を設定しなければデフォルトの直接接続が使用されます
-
-### 動作確認
-
-プロキシ経由で正しく動作しているか確認する方法：
-
-1. アプリケーション起動時のログを確認：
-   ```
-   {"event": "boto3_proxy_configured", "http_proxy": "http://proxy.example.com:8080", ...}
-   ```
-
-2. ヘルスチェックエンドポイントで確認：
-   ```bash
-   curl http://localhost:8000/health
-   ```
-
-3. 簡単なエージェント呼び出しをテスト：
-   ```bash
-   curl -X POST http://localhost:8000/api/v1/agent/invoke \
-     -H "X-Access-Key: ${ACCESS_KEY}" \
-     -H "Content-Type: application/json" \
-     -d '{"message": "Hello"}'
-   ```
-
 ## プロンプトキャッシュ
 
 このシステムは、AWS Bedrock Prompt Cachingを活用してコストとレイテンシを最適化しています。
 
 ### キャッシュ対象
 
-以下のコンポーネントでプロンプトがキャッシュされます：
-
-1. **Planner（実行計画策定）**
-   - システムプロンプト + 利用可能なツールとテンプレートエージェントのリスト
-   - 全リクエストで最初に実行されるため、最も効果が高い
-   - ツール定義が変更されない限り、ほぼ100%のキャッシュヒット率
-
-2. **Evaluator（中間評価）**
-   - システムプロンプト: 固定の評価基準プロンプト
-   - 会話履歴: 最新6メッセージ（文脈考慮のため）
-   - SubAgent実行後の評価で毎回使用
-
-3. **Synthesizer（最終応答生成）**
-   - システムプロンプト: 固定の応答生成ガイドライン
-   - 会話履歴: 最新10メッセージ（マルチターン対話で重要）
-   - 最終回答の生成時に使用（通常とストリーミング両方）
-   - 会話が続くほど、キャッシュ効果が大きくなる
+1. **Planner（実行計画策定）**: システムプロンプト + ツールリスト
+2. **Evaluator（中間評価）**: 評価基準プロンプト + 会話履歴
+3. **Synthesizer（最終応答生成）**: 応答生成ガイドライン + 会話履歴
 
 ### 効果
 
 - **コスト削減**: キャッシュヒット時、入力トークンコストが**90%削減**
 - **レイテンシ改善**: キャッシュされたプロンプトの処理が高速化
 - **キャッシュTTL**: 5分間（ヒットするたびにリセット）
-- **最小サイズ**: 1024トークン以上のプロンプトで効果を発揮
-
-### 実装詳細
-
-AWS Bedrockの`cache_control`機能を使用し、SystemMessageに以下の構造でキャッシュポイントを設定：
-
-```python
-SystemMessage(
-    content=[
-        {"type": "text", "text": "システムプロンプト内容"},
-        {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
-    ]
-)
-```
-
-クロスリージョン推論プロファイル（`us.anthropic.*`など）でも正常に動作します。
 
 ## 会話履歴とマルチターン対話
 
 このシステムはスレッド管理により会話履歴を保持し、マルチターン対話をサポートします。
 
-### 会話履歴の活用
-
-- **Synthesizer**: 最新10メッセージを参照し、文脈を考慮した回答を生成
-- **Evaluator**: 最新6メッセージを参照し、会話の流れに沿った評価を実施
-- **キャッシュ最適化**: 会話履歴もキャッシュされ、長い対話ほどコスト効率が向上
-
 ### スレッド管理
 
-各スレッドでトークン使用量を追跡し、コンテキストウィンドウの限界に達する前に警告：
+各スレッドでトークン使用量をデータベースで追跡し、コンテキストウィンドウの限界に達する前に警告：
 
 - **警告閾値**: 80% でwarning状態
 - **ロック閾値**: 95% でlocked状態（新規メッセージ拒否）

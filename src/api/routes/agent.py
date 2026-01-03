@@ -247,12 +247,12 @@ async def list_agents(
     context: Annotated[RequestContext, Depends(verify_access_key)],
 ):
     """Get list of available SubAgents."""
-    initialize_registries()
+    await initialize_registries()
     registry = get_agent_registry()
 
     agents = []
     for agent in registry.list_all():
-        info = registry.get_agent_info(agent.name)
+        info = await registry.get_agent_info(agent.name)
         if info:
             agents.append(AgentInfo(**info))
 
@@ -268,12 +268,12 @@ async def list_tools(
     context: Annotated[RequestContext, Depends(verify_access_key)],
 ):
     """Get list of available tools."""
-    initialize_registries()
+    await initialize_registries()
     registry = get_tool_registry()
 
     tools = []
     for tool in registry.list_all():
-        info = registry.get_tool_info(tool.name)
+        info = await registry.get_tool_info(tool.name)
         if info:
             tools.append(ToolInfo(**info))
 

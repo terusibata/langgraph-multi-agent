@@ -1,6 +1,6 @@
 """LangGraph workflow definition for multi-agent system with dynamic agents."""
 
-from typing import Literal, Any, AsyncIterator
+from typing import Any, AsyncIterator
 
 from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -21,6 +21,8 @@ from src.services.streaming import SSEManager
 from src.services.thread import get_thread_manager
 from src.services.error import get_error_handler, AgentError
 from src.config import get_settings
+from src.models.base import get_session_factory
+from src.repositories.execution import ExecutionRepository
 
 logger = structlog.get_logger()
 
@@ -30,38 +32,60 @@ class MultiAgentGraph:
     LangGraph-based multi-agent workflow with dynamic agent support.
 
     Orchestrates the MainAgent and SubAgents (both pre-defined and ad-hoc)
-    through a state machine.
+    through a state machine. Uses database for execution result persistence.
     """
 
-    def __init__(self, model_id: str | None = None, dynamic_mode: bool | None = None):
+    def __init__(
+        self,
+        model_id: str | None = None,
+        dynamic_mode: bool | None = None,
+        _skip_async_init: bool = False,
+    ):
         """
         Initialize the graph.
 
         Args:
             model_id: Optional model ID for MainAgent
             dynamic_mode: Override dynamic mode setting (None uses config)
+            _skip_async_init: Skip async initialization (for internal use)
         """
         self.settings = get_settings()
         self.model_id = model_id or self.settings.default_model_id
-
-        # Initialize registries first to load config
-        initialize_registries()
-
-        # Determine dynamic mode
-        if dynamic_mode is None:
-            self.dynamic_mode = is_dynamic_mode()
-        else:
-            self.dynamic_mode = dynamic_mode
+        self._initialized = False
+        self._dynamic_mode_override = dynamic_mode
 
         # Initialize components
         self.llm = get_llm(self.model_id)
-        self.main_agent = MainAgent(self.llm, self.model_id, self.dynamic_mode)
         self.executor = ParallelExecutor()
         self.thread_manager = get_thread_manager()
         self.error_handler = get_error_handler()
 
         # Build the graph
         self.graph = self._build_graph()
+
+        if not _skip_async_init:
+            # Dynamic mode will be determined at runtime
+            self.dynamic_mode = dynamic_mode if dynamic_mode is not None else True
+            self.main_agent = MainAgent(self.llm, self.model_id, self.dynamic_mode)
+
+    async def initialize(self) -> None:
+        """Initialize async components (registries, dynamic mode from DB)."""
+        if self._initialized:
+            return
+
+        # Initialize registries
+        await initialize_registries()
+
+        # Determine dynamic mode from database if not overridden
+        if self._dynamic_mode_override is None:
+            self.dynamic_mode = await is_dynamic_mode()
+        else:
+            self.dynamic_mode = self._dynamic_mode_override
+
+        # Reinitialize main agent with correct dynamic mode
+        self.main_agent = MainAgent(self.llm, self.model_id, self.dynamic_mode)
+
+        self._initialized = True
 
         logger.info(
             "multi_agent_graph_initialized",
@@ -145,6 +169,9 @@ class MultiAgentGraph:
             parallel_groups=len(plan.parallel_groups),
         )
 
+        # Save execution plan to database
+        await self._save_execution_plan(state)
+
         return state
 
     async def _execute_agents_node(self, state: AgentState) -> AgentState:
@@ -202,12 +229,18 @@ class MultiAgentGraph:
             timeout,
         )
 
-        # Store results
+        # Store results and save to database
         for agent_name, result in results.items():
             state["sub_agent_results"][agent_name] = result
 
             # Update metrics
             state["metrics"].tool_call_count += 1
+
+            # Find task for this agent
+            task = self._find_task_by_agent(state, agent_name)
+
+            # Save execution result to database
+            await self._save_execution_result(state, agent_name, result, task)
 
         return state
 
@@ -228,6 +261,9 @@ class MultiAgentGraph:
 
         # Finalize metrics
         state["metrics"].finalize()
+
+        # Complete execution session in database
+        await self._complete_execution_session(state)
 
         return state
 
@@ -289,6 +325,133 @@ class MultiAgentGraph:
         """
         return self.graph.compile(checkpointer=checkpointer)
 
+    async def _create_execution_session(
+        self,
+        state: AgentState,
+        tenant_id: str,
+    ) -> None:
+        """Create execution session in database."""
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            repo = ExecutionRepository(session)
+            await repo.create_session({
+                "session_id": state["session_id"],
+                "thread_id": state["thread_id"],
+                "tenant_id": tenant_id,
+                "user_input": state["user_input"],
+                "request_context": {
+                    "tenant_id": state["request_context"].tenant_id,
+                    "user_id": state["request_context"].user_id,
+                    "permissions": state["request_context"].permissions,
+                },
+            })
+
+    async def _save_execution_plan(self, state: AgentState) -> None:
+        """Save execution plan to database."""
+        try:
+            session_factory = get_session_factory()
+            async with session_factory() as session:
+                repo = ExecutionRepository(session)
+                plan = state["execution_plan"]
+                plan_dict = {
+                    "tasks": [
+                        {
+                            "id": t.id,
+                            "agent_name": t.agent_name,
+                            "is_adhoc": t.is_adhoc,
+                            "adhoc_spec": t.adhoc_spec.model_dump() if t.adhoc_spec else None,
+                            "priority": t.priority,
+                            "depends_on": t.depends_on,
+                            "parameters": t.parameters,
+                            "status": t.status,
+                        }
+                        for t in plan.tasks
+                    ],
+                    "parallel_groups": [g.model_dump() for g in plan.parallel_groups],
+                    "execution_order": plan.execution_order,
+                    "current_phase": plan.current_phase,
+                }
+                await repo.update_session_plan(state["session_id"], plan_dict)
+        except Exception as e:
+            logger.error(
+                "failed_to_save_execution_plan",
+                session_id=state["session_id"],
+                error=str(e),
+            )
+
+    async def _save_execution_result(
+        self,
+        state: AgentState,
+        agent_name: str,
+        result: Any,
+        task: Task | None,
+    ) -> None:
+        """Save execution result to database."""
+        try:
+            session_factory = get_session_factory()
+            async with session_factory() as session:
+                repo = ExecutionRepository(session)
+                result_data = {
+                    "result_type": "agent",
+                    "agent_name": agent_name,
+                    "is_adhoc": task.is_adhoc if task else False,
+                    "adhoc_spec": task.adhoc_spec.model_dump() if task and task.adhoc_spec else None,
+                    "task_id": task.id if task else None,
+                    "status": result.status,
+                    "data": result.data if hasattr(result, "data") else None,
+                    "error": result.error if hasattr(result, "error") else None,
+                    "retry_count": result.retry_count if hasattr(result, "retry_count") else 0,
+                    "search_variations": result.search_variations if hasattr(result, "search_variations") else [],
+                    "started_at": result.started_at if hasattr(result, "started_at") else None,
+                    "completed_at": result.completed_at if hasattr(result, "completed_at") else None,
+                    "duration_ms": result.duration_ms if hasattr(result, "duration_ms") else 0,
+                }
+                await repo.add_result(state["session_id"], result_data)
+        except Exception as e:
+            logger.error(
+                "failed_to_save_execution_result",
+                session_id=state["session_id"],
+                agent_name=agent_name,
+                error=str(e),
+            )
+
+    async def _complete_execution_session(self, state: AgentState) -> None:
+        """Complete execution session in database."""
+        try:
+            session_factory = get_session_factory()
+            async with session_factory() as session:
+                repo = ExecutionRepository(session)
+                metrics = state["metrics"]
+                await repo.complete_session(
+                    state["session_id"],
+                    state.get("final_response"),
+                    {
+                        "total_input_tokens": metrics.total_input_tokens,
+                        "total_output_tokens": metrics.total_output_tokens,
+                        "total_cost_usd": metrics.total_cost_usd,
+                        "llm_call_count": metrics.llm_call_count,
+                        "tool_call_count": metrics.tool_call_count,
+                        "llm_calls": [
+                            {
+                                "call_id": c.call_id,
+                                "model_id": c.model_id,
+                                "agent": c.agent,
+                                "phase": c.phase,
+                                "input_tokens": c.input_tokens,
+                                "output_tokens": c.output_tokens,
+                                "cost_usd": c.cost_usd,
+                            }
+                            for c in metrics.llm_calls
+                        ],
+                    },
+                )
+        except Exception as e:
+            logger.error(
+                "failed_to_complete_execution_session",
+                session_id=state["session_id"],
+                error=str(e),
+            )
+
     async def run(
         self,
         user_input: str,
@@ -308,6 +471,9 @@ class MultiAgentGraph:
         Returns:
             Final AgentState
         """
+        # Ensure initialized
+        await self.initialize()
+
         # Check thread status
         if thread_id:
             can_send, error_msg = await self.thread_manager.check_thread_status(thread_id)
@@ -320,6 +486,9 @@ class MultiAgentGraph:
             request_context=request_context,
             thread_id=thread_id,
         )
+
+        # Create execution session
+        await self._create_execution_session(state, request_context.tenant_id)
 
         # Compile and run graph
         compiled = self.compile(checkpointer)
@@ -359,6 +528,9 @@ class MultiAgentGraph:
             Event dicts for sse-starlette
         """
         try:
+            # Ensure initialized
+            await self.initialize()
+
             # Check thread status
             if thread_id:
                 can_send, error_msg = await self.thread_manager.check_thread_status(thread_id)
@@ -371,6 +543,9 @@ class MultiAgentGraph:
                 request_context=request_context,
                 thread_id=thread_id,
             )
+
+            # Create execution session
+            await self._create_execution_session(state, request_context.tenant_id)
 
             # Emit session start
             await sse_manager.emit_session_start()
@@ -553,12 +728,12 @@ class MultiAgentGraph:
         await sse_manager.emit_session_complete(complete_data)
 
 
-def create_graph(
+async def create_graph(
     model_id: str | None = None,
     dynamic_mode: bool | None = None,
 ) -> MultiAgentGraph:
     """
-    Create a new multi-agent graph.
+    Create a new multi-agent graph with async initialization.
 
     Args:
         model_id: Optional model ID for MainAgent
@@ -567,4 +742,6 @@ def create_graph(
     Returns:
         MultiAgentGraph instance
     """
-    return MultiAgentGraph(model_id, dynamic_mode)
+    graph = MultiAgentGraph(model_id, dynamic_mode, _skip_async_init=True)
+    await graph.initialize()
+    return graph
