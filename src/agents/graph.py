@@ -544,6 +544,8 @@ class MultiAgentGraph:
         checkpointer: Any = None,
         fast_response: bool = False,
         direct_tool_mode: bool = False,
+        response_format: str | None = None,
+        response_schema: dict | None = None,
     ) -> AsyncIterator[dict]:
         """
         Run the graph with SSE streaming.
@@ -556,6 +558,8 @@ class MultiAgentGraph:
             checkpointer: Optional checkpointer
             fast_response: Enable fast response mode (no sub-agents or tools)
             direct_tool_mode: Enable direct tool mode (MainAgent uses tools directly)
+            response_format: Response format (text or json)
+            response_schema: JSON schema for response validation
 
         Yields:
             Event dicts for sse-starlette
@@ -577,6 +581,8 @@ class MultiAgentGraph:
                 thread_id=thread_id,
                 fast_response=fast_response,
                 direct_tool_mode=direct_tool_mode,
+                response_format=response_format,
+                response_schema=response_schema,
             )
 
             # Create execution session
@@ -601,18 +607,29 @@ class MultiAgentGraph:
             # Get final state
             final_state = await compiled.aget_state(config)
 
+            # Check if this is a new thread (before updating metrics)
+            existing_thread = await self.thread_manager.get_thread(final_state.values["thread_id"])
+            is_new_thread = existing_thread is None or existing_thread.message_count == 0
+
+            # Generate title for new threads
+            thread_title = None
+            if is_new_thread:
+                thread_title = await self._generate_thread_title(state["user_input"], final_state.values.get("final_response", ""))
+
             # Update thread and emit complete
             thread_state = await self.thread_manager.update_thread_metrics(
                 final_state.values["thread_id"],
                 final_state.values["metrics"].total_input_tokens,
                 final_state.values["metrics"].total_output_tokens,
                 final_state.values["metrics"].total_cost_usd,
+                title=thread_title,
             )
 
             await self._emit_session_complete(
                 final_state.values,
                 thread_state,
                 sse_manager,
+                thread_title=thread_title,
             )
 
         except AgentError as e:
@@ -692,6 +709,7 @@ class MultiAgentGraph:
         state: AgentState,
         thread_state: Any,
         sse_manager: SSEManager,
+        thread_title: str | None = None,
     ) -> None:
         """Emit session complete event."""
         metrics = state["metrics"]
@@ -715,7 +733,11 @@ class MultiAgentGraph:
                 agent_info["type"] = "template"
             agents_executed.append(agent_info)
 
+        # Extract resources from sub-agent results
+        resources = self._extract_resources(state)
+
         complete_data = {
+            "title": thread_title,
             "response": {
                 "content": state.get("final_response", ""),
                 "finish_reason": "stop",
@@ -764,9 +786,139 @@ class MultiAgentGraph:
                 "thread_total_tokens": thread_state.thread_total_tokens,
                 "thread_total_cost_usd": thread_state.thread_total_cost_usd,
             },
+            "resources": resources,
         }
 
         await sse_manager.emit_session_complete(complete_data)
+
+    def _extract_resources(self, state: AgentState) -> list[dict]:
+        """
+        Extract resources from sub-agent results in unified format.
+
+        Args:
+            state: Agent state with sub-agent results
+
+        Returns:
+            List of resources in unified format
+        """
+        resources = []
+
+        for agent_name, result in state.get("sub_agent_results", {}).items():
+            if result.status == "failed" or not result.data:
+                continue
+
+            # Get tool name from tool_results
+            tool_name = agent_name  # Default to agent name
+            for tr in state.get("tool_results", []):
+                if tr.agent_name == agent_name:
+                    tool_name = tr.tool_name
+                    break
+
+            # Handle list of results
+            if isinstance(result.data, list):
+                for item in result.data:
+                    if isinstance(item, dict):
+                        resource = {
+                            "id": item.get("sys_id") or item.get("id") or item.get("source", "unknown"),
+                            "type": self._infer_resource_type(agent_name, tool_name),
+                            "title": item.get("title") or item.get("name", "Untitled"),
+                            "content": item.get("content") or item.get("description") or item.get("snippet"),
+                            "score": item.get("score") or item.get("relevance"),
+                            "tool_name": tool_name,
+                            "metadata": {k: v for k, v in item.items() if k not in ["title", "name", "content", "description", "snippet", "score", "relevance", "sys_id", "id", "source"]}
+                        }
+                        resources.append(resource)
+
+            # Handle single dict result
+            elif isinstance(result.data, dict):
+                resource = {
+                    "id": result.data.get("sys_id") or result.data.get("id") or result.data.get("source", "unknown"),
+                    "type": self._infer_resource_type(agent_name, tool_name),
+                    "title": result.data.get("title") or result.data.get("name", "Untitled"),
+                    "content": result.data.get("content") or result.data.get("description") or result.data.get("snippet"),
+                    "score": result.data.get("score") or result.data.get("relevance"),
+                    "tool_name": tool_name,
+                    "metadata": {k: v for k, v in result.data.items() if k not in ["title", "name", "content", "description", "snippet", "score", "relevance", "sys_id", "id", "source"]}
+                }
+                resources.append(resource)
+
+        return resources
+
+    def _infer_resource_type(self, agent_name: str, tool_name: str) -> str:
+        """Infer resource type from agent or tool name."""
+        name_lower = (agent_name + " " + tool_name).lower()
+
+        if "knowledge" in name_lower or "kb" in name_lower:
+            return "knowledge_base"
+        elif "vector" in name_lower or "document" in name_lower:
+            return "document"
+        elif "catalog" in name_lower:
+            return "catalog"
+        elif "search" in name_lower:
+            return "search_result"
+        else:
+            return "general"
+
+    async def _generate_thread_title(self, user_input: str, response: str) -> str:
+        """
+        Generate a short Japanese title for the thread.
+
+        Args:
+            user_input: User's first message
+            response: AI's response
+
+        Returns:
+            Short Japanese title (max 30 characters)
+        """
+        from langchain_core.messages import HumanMessage, SystemMessage
+        from langchain_core.prompts import ChatPromptTemplate
+
+        system_prompt = """ユーザーとAIの会話内容から、会話のタイトルを日本語で短く生成してください。
+
+要件:
+- 最大30文字以内
+- 会話の主要なトピックを表す
+- 簡潔で分かりやすい
+- 「〜について」「〜の質問」などの形式でも可
+
+例:
+- プリンター接続エラーの解決
+- パスワードリセット手順
+- 新規ユーザー登録方法
+
+タイトルのみを返してください。他の文章は不要です。"""
+
+        messages_list = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=f"ユーザー: {user_input[:200]}\nAI: {response[:200]}")
+        ]
+
+        prompt = ChatPromptTemplate.from_messages(messages_list)
+
+        try:
+            chain = prompt | self.llm
+            result = await chain.ainvoke({})
+            title = result.content if hasattr(result, 'content') else str(result)
+
+            # Clean up and truncate
+            title = title.strip().replace('"', '').replace("'", '')
+            if len(title) > 30:
+                title = title[:30]
+
+            logger.info(
+                "thread_title_generated",
+                title=title,
+            )
+
+            return title
+
+        except Exception as e:
+            logger.error(
+                "thread_title_generation_failed",
+                error=str(e),
+            )
+            # Fallback to user input truncated
+            return user_input[:30] if len(user_input) > 30 else user_input
 
 
 async def create_graph(

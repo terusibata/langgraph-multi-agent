@@ -16,6 +16,7 @@ class ThreadModel(Base, TimestampMixin):
 
     thread_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    title: Mapped[str | None] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="active", index=True
     )  # "active", "warning", "locked"
@@ -32,6 +33,7 @@ class ThreadModel(Base, TimestampMixin):
         return {
             "thread_id": self.thread_id,
             "tenant_id": self.tenant_id,
+            "title": self.title,
             "status": self.status,
             "total_tokens_used": self.total_tokens_used,
             "total_cost_usd": self.total_cost_usd,
@@ -48,6 +50,7 @@ class ThreadModel(Base, TimestampMixin):
         return cls(
             thread_id=data["thread_id"],
             tenant_id=data["tenant_id"],
+            title=data.get("title"),
             status=data.get("status", "active"),
             total_tokens_used=data.get("total_tokens_used", 0),
             total_cost_usd=data.get("total_cost_usd", 0.0),

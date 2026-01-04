@@ -306,6 +306,14 @@ class AgentDefinitionCreate(BaseModel):
         description="Agent priority (higher = preferred)",
     )
     enabled: bool = Field(default=True, description="Whether agent is enabled")
+    response_format: Literal["text", "json"] | None = Field(
+        default=None,
+        description="Output response format (text or json)",
+    )
+    response_schema: dict | None = Field(
+        default=None,
+        description="JSON schema for response validation (required when response_format is json)",
+    )
     metadata: dict = Field(
         default_factory=dict, description="Additional metadata"
     )
@@ -365,6 +373,14 @@ class AgentDefinitionUpdate(BaseModel):
     )
     priority: int | None = Field(default=None, ge=-100, le=100, description="Agent priority")
     enabled: bool | None = Field(default=None, description="Whether agent is enabled")
+    response_format: Literal["text", "json"] | None = Field(
+        default=None,
+        description="Output response format (text or json)",
+    )
+    response_schema: dict | None = Field(
+        default=None,
+        description="JSON schema for response validation",
+    )
     metadata: dict | None = Field(default=None, description="Additional metadata")
 
 
@@ -380,6 +396,8 @@ class AgentDefinitionResponse(BaseModel):
     retry_strategy: RetryStrategyConfig = Field(..., description="Retry configuration")
     priority: int = Field(..., description="Agent priority")
     enabled: bool = Field(..., description="Whether agent is enabled")
+    response_format: str | None = Field(default=None, description="Output response format")
+    response_schema: dict | None = Field(default=None, description="JSON schema for response")
     metadata: dict = Field(default_factory=dict, description="Additional metadata")
     created_at: datetime | None = Field(default=None, description="Creation timestamp")
     updated_at: datetime | None = Field(default=None, description="Last update timestamp")

@@ -115,6 +115,8 @@ async def stream_agent(
             thread_id=body.thread_id,
             fast_response=body.fast_response,
             direct_tool_mode=body.direct_tool_mode,
+            response_format=body.response_format,
+            response_schema=body.response_schema,
         ):
             yield event
 

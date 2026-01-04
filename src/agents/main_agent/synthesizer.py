@@ -1,5 +1,6 @@
 """Synthesizer component for MainAgent."""
 
+import json
 from typing import Any, AsyncIterator
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -44,6 +45,15 @@ FAST_RESPONSE_SYSTEM_PROMPT = """あなたはユーザーサポートアシス�
 - 手順は番号付きリスト
 - 重要な情報は強調
 - 長すぎない回答（必要十分な情報量）
+"""
+
+JSON_FORMAT_INSTRUCTION = """
+IMPORTANT: You MUST respond with valid JSON that conforms to the following schema:
+
+{schema}
+
+Return ONLY the JSON object, without any markdown code blocks or additional text.
+Ensure all required fields are included and the response is valid JSON.
 """
 
 
@@ -168,6 +178,16 @@ class Synthesizer:
         Yields:
             Response tokens
         """
+        # Check if JSON format is requested
+        response_format = state.get("response_format")
+        response_schema = state.get("response_schema")
+
+        if response_format == "json" and response_schema:
+            # Use structured output for JSON format (no streaming)
+            full_response = await self._synthesize_json_format(state, response_schema)
+            yield full_response
+            return
+
         # Check if fast response mode is enabled
         if state.get("fast_response", False):
             async for token in self._synthesize_fast_response_stream(state):
@@ -522,3 +542,132 @@ class Synthesizer:
                 error=str(e),
             )
             yield "申し訳ございません。現在、回答の生成中にエラーが発生しました。しばらくしてから再度お試しください。"
+
+    async def _synthesize_json_format(self, state: AgentState, schema: dict) -> str:
+        """
+        Generate response in JSON format according to schema.
+
+        Args:
+            state: Current agent state
+            schema: JSON schema for response
+
+        Returns:
+            JSON string
+        """
+        user_input = state["user_input"]
+        sub_agent_results = state.get("sub_agent_results", {})
+        evaluation = state.get("intermediate_evaluation")
+        messages = state.get("messages", [])
+
+        # Build context from sub-agent results if available
+        context = ""
+        if sub_agent_results:
+            context = self._build_context(sub_agent_results, evaluation)
+
+        # Build conversation history
+        conversation_history = self._format_conversation_history(messages[:-1] if messages else [])
+
+        # Format schema as JSON string
+        schema_str = json.dumps(schema, indent=2, ensure_ascii=False)
+
+        # Build system prompt with JSON format instruction
+        system_prompt = SYNTHESIZER_SYSTEM_PROMPT + "\n\n" + JSON_FORMAT_INSTRUCTION.format(schema=schema_str)
+
+        # Check if we should use prompt caching based on model support
+        model_id = getattr(self.llm, 'model_id', None)
+        use_caching = should_use_prompt_caching(model_id) if model_id else False
+
+        # Build messages
+        messages_list = []
+
+        if use_caching:
+            messages_list.append(
+                SystemMessage(
+                    content=[
+                        {"type": "text", "text": system_prompt},
+                        {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
+                    ]
+                )
+            )
+
+            if conversation_history:
+                messages_list.append(
+                    SystemMessage(
+                        content=[
+                            {"type": "text", "text": f"## 会話履歴\n\n{conversation_history}"},
+                            {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
+                        ]
+                    )
+                )
+        else:
+            messages_list.append(SystemMessage(content=system_prompt))
+
+            if conversation_history:
+                messages_list.append(
+                    SystemMessage(content=f"## 会話履歴\n\n{conversation_history}")
+                )
+
+        # Add user request
+        if context:
+            messages_list.append(
+                HumanMessage(content=f"""
+ユーザーの質問: {user_input}
+
+収集した情報:
+{context}
+
+上記の情報を基に、指定されたJSON形式で回答を生成してください。
+""")
+            )
+        else:
+            messages_list.append(HumanMessage(content=user_input))
+
+        prompt = ChatPromptTemplate.from_messages(messages_list)
+
+        try:
+            chain = prompt | self.llm
+            result = await chain.ainvoke({})
+
+            response_content = result.content if hasattr(result, 'content') else str(result)
+
+            # Try to parse and validate JSON
+            try:
+                # Remove markdown code blocks if present
+                if response_content.strip().startswith("```"):
+                    lines = response_content.strip().split("\n")
+                    # Remove first and last lines (markdown delimiters)
+                    if lines[0].startswith("```"):
+                        lines = lines[1:]
+                    if lines and lines[-1].startswith("```"):
+                        lines = lines[:-1]
+                    response_content = "\n".join(lines)
+
+                # Parse JSON to validate
+                json_obj = json.loads(response_content)
+
+                # Return formatted JSON
+                return json.dumps(json_obj, ensure_ascii=False)
+
+            except json.JSONDecodeError as e:
+                logger.error(
+                    "json_response_parse_failed",
+                    session_id=state["session_id"],
+                    error=str(e),
+                    response=response_content[:500],
+                )
+                # Return error as JSON
+                return json.dumps({
+                    "error": "Failed to generate valid JSON response",
+                    "detail": str(e)
+                }, ensure_ascii=False)
+
+        except Exception as e:
+            logger.error(
+                "json_synthesis_failed",
+                session_id=state["session_id"],
+                error=str(e),
+            )
+            return json.dumps({
+                "error": "Failed to generate response",
+                "detail": str(e)
+            }, ensure_ascii=False)
