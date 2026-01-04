@@ -377,7 +377,9 @@ class MultiAgentGraph:
                 "failed_to_save_execution_plan",
                 session_id=state["session_id"],
                 error=str(e),
+                exc_info=True,  # Include stack trace
             )
+            # Continue execution even if plan save fails
 
     async def _save_execution_result(
         self,
@@ -413,7 +415,9 @@ class MultiAgentGraph:
                 session_id=state["session_id"],
                 agent_name=agent_name,
                 error=str(e),
+                exc_info=True,  # Include stack trace
             )
+            # Results are preserved in state["sub_agent_results"]
 
     async def _complete_execution_session(self, state: AgentState) -> None:
         """Complete execution session in database."""

@@ -1,0 +1,52 @@
+{
+  "name": "frontend_servicenow_search",
+  "description": "フロントエンド経由でServiceNowナレッジとケースを統合検索します。セッショントークンを使用してフロントエンドAPIを呼び出し、ServiceNowから情報を取得します。",
+  "category": "frontend_api",
+  "parameters": [
+    {
+      "name": "query",
+      "type": "string",
+      "description": "検索クエリ（ナレッジベースとケースを検索）",
+      "required": true
+    },
+    {
+      "name": "count",
+      "type": "integer",
+      "description": "取得件数（デフォルト: 30、最大: 50）",
+      "required": false,
+      "default": 30
+    }
+  ],
+  "executor": {
+    "type": "http",
+    "url": "https://your-frontend.com/api/servicenow/search",
+    "method": "POST",
+    "auth_type": "custom_header",
+    "auth_config": {
+      "headers": {
+        "X-Session-Token": "{{ context.service_tokens.frontend_session.token }}"
+      }
+    },
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body_template": {
+      "query": "{{ params.query }}",
+      "count": "{{ params.count }}"
+    },
+    "response_path": "$"
+  },
+  "required_service_token": "frontend_session",
+  "timeout_seconds": 30,
+  "enabled": true,
+  "metadata": {
+    "version": "1.0.0",
+    "example_usage": {
+      "query": "エラーコード500について",
+      "count": 10
+    },
+    "required_frontend_headers": {
+      "X-Session-Token": "セッショントークン（フロントエンドで発行）"
+    }
+  }
+}

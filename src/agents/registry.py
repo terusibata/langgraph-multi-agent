@@ -790,27 +790,25 @@ async def initialize_registries() -> None:
 
 
 def register_all_tools() -> None:
-    """Register all static tool implementations."""
-    # Import tools to trigger registration
-    from src.agents.tools import (
-        servicenow,
-        vector_db,
-        catalog,
-    )
+    """
+    Register all static tool implementations.
 
-    logger.info("all_tools_registered")
+    NOTE: Static tools have been moved to examples/ directory.
+    All tools should now be registered via Admin API as dynamic tools.
+    This function is kept for backward compatibility but does nothing.
+    """
+    logger.info("static_tools_deprecated", message="Use dynamic tools via Admin API")
 
 
 def register_all_agents() -> None:
-    """Register all static agent implementations."""
-    # Import agents to trigger registration
-    from src.agents.sub_agents import (
-        knowledge_search,
-        vector_search,
-        catalog as catalog_agent,
-    )
+    """
+    Register all static agent implementations.
 
-    logger.info("all_agents_registered")
+    NOTE: Static agents have been moved to examples/ directory.
+    All agents should now be registered via Admin API as dynamic agents.
+    This function is kept for backward compatibility but does nothing.
+    """
+    logger.info("static_agents_deprecated", message="Use dynamic agents via Admin API")
 
 
 # =============================================================================

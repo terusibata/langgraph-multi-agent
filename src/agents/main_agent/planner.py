@@ -141,7 +141,7 @@ class Planner:
         self.dynamic_mode = dynamic_mode
         self.output_parser = JsonOutputParser()
 
-    def get_available_tools_description(self) -> str:
+    async def get_available_tools_description(self) -> str:
         """Get description of all available tools (static and dynamic)."""
         tool_registry = get_tool_registry()
         descriptions = []
@@ -154,7 +154,7 @@ class Planner:
             )
 
         # Add dynamic tool definitions
-        for definition in tool_registry.list_enabled_definitions():
+        for definition in await tool_registry.list_enabled_definitions():
             descriptions.append(
                 f"- {definition.name}: {definition.description}\n"
                 f"  カテゴリ: {definition.category}\n"
@@ -163,7 +163,7 @@ class Planner:
 
         return "\n".join(descriptions) if descriptions else "ツールが登録されていません"
 
-    def get_template_agents_description(self) -> str:
+    async def get_template_agents_description(self) -> str:
         """Get description of template (pre-defined) agents."""
         registry = get_agent_registry()
         descriptions = []
@@ -179,7 +179,7 @@ class Planner:
             )
 
         # Add dynamic agents (also considered templates)
-        for definition in registry.list_enabled_definitions():
+        for definition in await registry.list_enabled_definitions():
             capabilities = ", ".join(definition.capabilities)
             tools = ", ".join(definition.tools)
             descriptions.append(
@@ -190,7 +190,7 @@ class Planner:
 
         return "\n".join(descriptions) if descriptions else "テンプレートエージェントなし"
 
-    def get_available_agents_description(self) -> str:
+    async def get_available_agents_description(self) -> str:
         """Get description of available agents (for simple mode)."""
         registry = get_agent_registry()
 
@@ -204,7 +204,7 @@ class Planner:
             )
 
         # Add dynamic agents
-        for definition in registry.list_enabled_definitions():
+        for definition in await registry.list_enabled_definitions():
             capabilities = ", ".join(definition.capabilities)
             descriptions.append(
                 f"- {definition.name}: {definition.description}\n  能力: {capabilities}"
@@ -272,8 +272,8 @@ class Planner:
         # The tool and agent descriptions are cached since they change infrequently
         system_prompt_content = TOOL_ANALYSIS_PROMPT.format(
             company_context=self.get_company_context_description(state),
-            available_tools=self.get_available_tools_description(),
-            template_agents=self.get_template_agents_description(),
+            available_tools=await self.get_available_tools_description(),
+            template_agents=await self.get_template_agents_description(),
         )
 
         # Check if we should use prompt caching based on model support
@@ -334,7 +334,7 @@ class Planner:
         # Build system prompt with caching
         system_prompt_content = SIMPLE_PLANNER_PROMPT.format(
             company_context=self.get_company_context_description(state),
-            available_agents=self.get_available_agents_description()
+            available_agents=await self.get_available_agents_description()
         )
 
         # Check if we should use prompt caching based on model support

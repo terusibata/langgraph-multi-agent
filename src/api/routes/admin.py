@@ -29,6 +29,7 @@ from src.agents.registry import (
 from src.api.routes.admin_tools import router as tools_router
 from src.api.routes.admin_agents import router as agents_router
 from src.api.routes.admin_openapi import router as openapi_router
+from src.api.routes.admin_agent_testing import router as testing_router
 
 logger = structlog.get_logger()
 
@@ -39,6 +40,7 @@ router = APIRouter(prefix="/admin", tags=["Admin"])
 router.include_router(tools_router)
 router.include_router(agents_router)
 router.include_router(openapi_router)
+router.include_router(testing_router)
 
 
 # =============================================================================
