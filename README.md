@@ -48,16 +48,14 @@ MainAgent (Supervisor)
 ### セットアップ
 
 ```bash
-# 1. 環境変数設定
+# 1. env作成
 cp .env.example .env
-# .env を編集
 
 # 2. Docker起動
-cd docker
 docker-compose up -d
 
-# 3. マイグレーション
-alembic upgrade head
+# 3. マイグレーション（コンテナ内）
+docker-compose exec api alembic upgrade head
 
 # 4. ヘルスチェック
 curl http://localhost:8000/health
