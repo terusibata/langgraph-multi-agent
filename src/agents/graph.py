@@ -483,6 +483,8 @@ class MultiAgentGraph:
         checkpointer: Any = None,
         fast_response: bool = False,
         direct_tool_mode: bool = False,
+        response_format: str = "text",
+        response_schema: dict | None = None,
     ) -> AgentState:
         """
         Run the graph synchronously.
@@ -494,6 +496,8 @@ class MultiAgentGraph:
             checkpointer: Optional checkpointer
             fast_response: Enable fast response mode (no sub-agents or tools)
             direct_tool_mode: Enable direct tool mode (MainAgent uses tools directly)
+            response_format: Response format ("text" or "json")
+            response_schema: JSON schema for structured output
 
         Returns:
             Final AgentState
@@ -514,6 +518,8 @@ class MultiAgentGraph:
             thread_id=thread_id,
             fast_response=fast_response,
             direct_tool_mode=direct_tool_mode,
+            response_format=response_format,
+            response_schema=response_schema,
         )
 
         # Create execution session
@@ -544,6 +550,8 @@ class MultiAgentGraph:
         checkpointer: Any = None,
         fast_response: bool = False,
         direct_tool_mode: bool = False,
+        response_format: str = "text",
+        response_schema: dict | None = None,
     ) -> AsyncIterator[dict]:
         """
         Run the graph with SSE streaming.
@@ -556,6 +564,8 @@ class MultiAgentGraph:
             checkpointer: Optional checkpointer
             fast_response: Enable fast response mode (no sub-agents or tools)
             direct_tool_mode: Enable direct tool mode (MainAgent uses tools directly)
+            response_format: Response format ("text" or "json")
+            response_schema: JSON schema for structured output
 
         Yields:
             Event dicts for sse-starlette
@@ -577,6 +587,8 @@ class MultiAgentGraph:
                 thread_id=thread_id,
                 fast_response=fast_response,
                 direct_tool_mode=direct_tool_mode,
+                response_format=response_format,
+                response_schema=response_schema,
             )
 
             # Create execution session

@@ -90,6 +90,31 @@ python -m src.main
 | `direct_tool_mode: true` | ダイレクトツールモード（MainAgentが直接tools使用） | ツールが必要だが高速に回答したい場合 | 高速 |
 | 両方false（デフォルト） | 通常モード（sub agentを使用） | 詳細な情報収集が必要な場合 | 標準 |
 
+#### レスポンスフォーマットオプション
+
+構造化されたJSON出力が必要な場合（翻訳、分析、分類など）：
+
+| パラメータ | 説明 | 例 |
+|-----------|------|-----|
+| `response_format` | `"text"` (デフォルト) または `"json"` | 翻訳アプリなど特殊用途で使用 |
+| `response_schema` | JSON Schemaで出力形式を指定 | 動的にレスポンス構造を定義 |
+
+**ツール結果の自動正規化**
+
+異なるツール（ナレッジ検索、ベクトル検索など）の結果は、自動的に統一フォーマットに変換されます：
+
+```json
+{
+  "id": "KB001",
+  "type": "knowledge_base",
+  "title": "プリンター接続トラブルシューティング",
+  "content": "...",
+  "score": 0.95,
+  "tool_name": "frontend_servicenow_search",
+  "metadata": { ... }
+}
+```
+
 **使用例:**
 
 ```bash
@@ -118,6 +143,34 @@ curl -X POST http://localhost:8000/api/v1/agent/stream \
   -d '{
     "message": "システムにアクセスできない問題を解決したい"
   }'
+
+# JSON形式で回答（翻訳アプリの例）
+curl -X POST http://localhost:8000/api/v1/agent/stream \
+  -H "Content-Type: application/json" \
+  -H "X-Access-Key: your-access-key" \
+  -d '{
+    "message": "Translate to English: こんにちは、世界",
+    "response_format": "json",
+    "response_schema": {
+      "type": "object",
+      "properties": {
+        "original_text": {"type": "string"},
+        "translated_text": {"type": "string"},
+        "detected_language": {"type": "string"},
+        "confidence": {"type": "number"}
+      },
+      "required": ["original_text", "translated_text"]
+    },
+    "fast_response": true
+  }'
+
+# レスポンス例:
+# {
+#   "original_text": "こんにちは、世界",
+#   "translated_text": "Hello, world",
+#   "detected_language": "ja",
+#   "confidence": 0.99
+# }
 ```
 
 ### スレッド管理

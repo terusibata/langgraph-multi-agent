@@ -1,12 +1,15 @@
 """Synthesizer component for MainAgent."""
 
+import json
 from typing import Any, AsyncIterator
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate
+from pydantic import BaseModel, create_model, Field
 import structlog
 
 from src.agents.state import AgentState
+from src.agents.sources import SourceCollection, normalize_tool_result
 from src.config.models import should_use_prompt_caching
 
 logger = structlog.get_logger()
@@ -69,8 +72,12 @@ class Synthesizer:
             state: Current agent state
 
         Returns:
-            Final response string
+            Final response string (or JSON string if response_format="json")
         """
+        # Check if JSON response is requested
+        if state.get("response_format") == "json":
+            return await self._synthesize_json_response(state)
+
         # Check if fast response mode is enabled
         if state.get("fast_response", False):
             return await self._synthesize_fast_response(state)
@@ -522,3 +529,212 @@ class Synthesizer:
                 error=str(e),
             )
             yield "申し訳ございません。現在、回答の生成中にエラーが発生しました。しばらくしてから再度お試しください。"
+
+    async def _synthesize_json_response(self, state: AgentState) -> str:
+        """
+        Generate structured JSON response based on schema.
+
+        Args:
+            state: Current agent state
+
+        Returns:
+            JSON string matching the provided schema
+        """
+        user_input = state["user_input"]
+        sub_agent_results = state["sub_agent_results"]
+        messages = state["messages"]
+        response_schema = state.get("response_schema")
+
+        # Build sources from tool results
+        sources = self._build_source_collection(state)
+
+        # Build context
+        context = self._build_context(sub_agent_results, state["intermediate_evaluation"])
+        conversation_history = self._format_conversation_history(messages[:-1])
+
+        # Create Pydantic model from schema if provided
+        if response_schema:
+            try:
+                output_model = self._create_pydantic_model(response_schema)
+            except Exception as e:
+                logger.error(
+                    "failed_to_create_pydantic_model",
+                    session_id=state["session_id"],
+                    error=str(e),
+                )
+                # Fallback to generic JSON
+                output_model = None
+        else:
+            output_model = None
+
+        # Build system prompt for structured output
+        system_content = f"""あなたはJSONフォーマットで回答するアシスタントです。
+
+収集した情報:
+{context}
+
+必ず指定されたJSON形式で回答してください。余計なテキストは含めないでください。"""
+
+        messages_list = []
+
+        # Check if we should use prompt caching
+        model_id = getattr(self.llm, 'model_id', None)
+        use_caching = should_use_prompt_caching(model_id) if model_id else False
+
+        if use_caching:
+            messages_list.append(
+                SystemMessage(
+                    content=[
+                        {"type": "text", "text": system_content},
+                        {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
+                    ]
+                )
+            )
+
+            if conversation_history:
+                messages_list.append(
+                    SystemMessage(
+                        content=[
+                            {"type": "text", "text": f"## 会話履歴\n\n{conversation_history}"},
+                            {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
+                        ]
+                    )
+                )
+        else:
+            messages_list.append(SystemMessage(content=system_content))
+
+            if conversation_history:
+                messages_list.append(
+                    SystemMessage(content=f"## 会話履歴\n\n{conversation_history}")
+                )
+
+        # Add user request with schema
+        if response_schema:
+            schema_str = json.dumps(response_schema, ensure_ascii=False, indent=2)
+            messages_list.append(
+                HumanMessage(content=f"""ユーザーの質問: {user_input}
+
+以下のJSON形式で回答してください:
+{schema_str}""")
+            )
+        else:
+            messages_list.append(HumanMessage(content=user_input))
+
+        try:
+            prompt = ChatPromptTemplate.from_messages(messages_list)
+
+            # Use structured output if model available
+            if output_model and hasattr(self.llm, 'with_structured_output'):
+                structured_llm = self.llm.with_structured_output(output_model)
+                chain = prompt | structured_llm
+                result = await chain.ainvoke({})
+
+                # Convert Pydantic model to JSON
+                if isinstance(result, BaseModel):
+                    json_result = result.model_dump_json(indent=2, exclude_none=True)
+                else:
+                    json_result = json.dumps(result, ensure_ascii=False, indent=2)
+            else:
+                # Fallback to regular LLM with JSON mode
+                chain = prompt | self.llm
+                result = await chain.ainvoke({})
+
+                # Extract JSON from response
+                content = result.content if hasattr(result, 'content') else str(result)
+                json_result = self._extract_json(content)
+
+            logger.info(
+                "json_response_complete",
+                session_id=state["session_id"],
+                has_schema=response_schema is not None,
+            )
+
+            return json_result
+
+        except Exception as e:
+            logger.error(
+                "json_response_failed",
+                session_id=state["session_id"],
+                error=str(e),
+            )
+            # Return error in JSON format
+            return json.dumps({
+                "error": "回答の生成中にエラーが発生しました",
+                "details": str(e)
+            }, ensure_ascii=False, indent=2)
+
+    def _create_pydantic_model(self, schema: dict) -> type[BaseModel]:
+        """Create a Pydantic model from JSON schema."""
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+
+        fields = {}
+        for field_name, field_schema in properties.items():
+            field_type = self._json_type_to_python(field_schema.get("type", "string"))
+            is_required = field_name in required
+
+            if is_required:
+                fields[field_name] = (field_type, Field(..., description=field_schema.get("description", "")))
+            else:
+                fields[field_name] = (field_type, Field(default=None, description=field_schema.get("description", "")))
+
+        return create_model("DynamicResponseModel", **fields)
+
+    def _json_type_to_python(self, json_type: str) -> type:
+        """Convert JSON schema type to Python type."""
+        type_mapping = {
+            "string": str,
+            "number": float,
+            "integer": int,
+            "boolean": bool,
+            "array": list,
+            "object": dict,
+        }
+        return type_mapping.get(json_type, str)
+
+    def _extract_json(self, content: str) -> str:
+        """Extract JSON from content that might contain markdown or other text."""
+        # Try to find JSON in code blocks
+        import re
+        json_match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
+        if json_match:
+            return json_match.group(1).strip()
+
+        # Try to find JSON directly
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        if json_match:
+            try:
+                # Validate it's proper JSON
+                json.loads(json_match.group(0))
+                return json_match.group(0)
+            except json.JSONDecodeError:
+                pass
+
+        # Return as-is if no JSON found
+        return content
+
+    def _build_source_collection(self, state: AgentState) -> SourceCollection:
+        """Build normalized source collection from all tool results."""
+        collection = SourceCollection()
+
+        # Normalize results from sub-agents
+        for agent_name, result in state.get("sub_agent_results", {}).items():
+            if result.data:
+                # Get tool name from result metadata if available
+                tool_name = getattr(result, 'tool_name', 'unknown')
+                sources = normalize_tool_result(tool_name, agent_name, result.data)
+                for source in sources:
+                    collection.add_source(source)
+
+        # Also add from direct tool results
+        for tool_result in state.get("tool_results", []):
+            if tool_result.data:
+                sources = normalize_tool_result(
+                    tool_result.tool_name,
+                    tool_result.agent_name,
+                    tool_result.data
+                )
+                for source in sources:
+                    collection.add_source(source)
+
+        return collection

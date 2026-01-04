@@ -1,6 +1,6 @@
 """Request schemas for API endpoints."""
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -73,6 +73,14 @@ class AgentStreamRequest(BaseModel):
     direct_tool_mode: bool = Field(
         default=False,
         description="Enable direct tool mode (MainAgent uses tools directly, no sub-agents)",
+    )
+    response_format: Literal["text", "json"] = Field(
+        default="text",
+        description="Response format: 'text' for natural language, 'json' for structured output",
+    )
+    response_schema: dict | None = Field(
+        default=None,
+        description="JSON schema for structured output (when response_format='json')",
     )
 
     model_config = {
