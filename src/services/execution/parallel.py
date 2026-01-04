@@ -69,7 +69,7 @@ class ParallelExecutor:
 
             # If not a static agent, check for dynamic agent definition
             if not agent:
-                definition = registry.get_definition(agent_name)
+                definition = await registry.get_definition(agent_name)
                 if definition:
                     agent = DynamicAgentFactory.create(definition)
                     logger.debug(
@@ -150,7 +150,7 @@ class ParallelExecutor:
                 agent = registry.get(task.agent_name)
 
                 if not agent:
-                    definition = registry.get_definition(task.agent_name)
+                    definition = await registry.get_definition(task.agent_name)
                     if definition:
                         agent = DynamicAgentFactory.create(definition)
 

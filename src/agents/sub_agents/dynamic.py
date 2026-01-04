@@ -44,9 +44,6 @@ class DynamicAgent(SubAgentBase):
             backoff_seconds=retry_config.get("backoff_seconds", 0.5),
         )
 
-        # Get tools
-        tools = self._build_tools(definition.tools)
-
         # Get model ID from executor config
         executor = definition.executor
         model_id = executor.get("model_id") or get_settings().sub_agent_model_id
@@ -55,7 +52,7 @@ class DynamicAgent(SubAgentBase):
             name=definition.name,
             description=definition.description,
             capabilities=definition.capabilities,
-            tools=tools,
+            tools=[],  # Will be initialized lazily
             model_id=model_id,
             retry_strategy=retry_strategy,
         )
@@ -63,21 +60,21 @@ class DynamicAgent(SubAgentBase):
         self.definition = definition
         self.executor_type = executor.get("type", "llm")
         self.priority = definition.priority
+        self._tool_names = definition.tools
+        self._tools_initialized = False
 
-    def _build_tools(self, tool_names: list[str]) -> list[ToolBase]:
+    async def _build_tools(self) -> None:
         """
         Build tool instances from tool names.
-
-        Args:
-            tool_names: List of tool names
-
-        Returns:
-            List of tool instances
+        This is called lazily on first execution.
         """
-        tools = []
-        tool_registry = get_tool_registry()
+        if self._tools_initialized:
+            return
 
-        for name in tool_names:
+        tool_registry = get_tool_registry()
+        tools = []
+
+        for name in self._tool_names:
             # First check for static tools
             static_tool = tool_registry.get(name)
             if static_tool:
@@ -85,14 +82,15 @@ class DynamicAgent(SubAgentBase):
                 continue
 
             # Then check for dynamic tools
-            definition = tool_registry.get_definition(name)
+            definition = await tool_registry.get_definition(name)
             if definition:
                 tools.append(DynamicToolFactory.create(definition))
                 continue
 
             logger.warning("tool_not_found", tool_name=name, agent=self.name)
 
-        return tools
+        self.tools = tools
+        self._tools_initialized = True
 
     async def execute(
         self,
@@ -109,6 +107,9 @@ class DynamicAgent(SubAgentBase):
         Returns:
             SubAgentResult with execution status and data
         """
+        # Initialize tools if not already done
+        await self._build_tools()
+
         started_at = datetime.now(timezone.utc)
 
         try:
@@ -506,7 +507,7 @@ class DynamicAgentFactory:
         return DynamicAgent(definition)
 
     @staticmethod
-    def create_from_name(name: str) -> DynamicAgent | None:
+    async def create_from_name(name: str) -> DynamicAgent | None:
         """
         Create a DynamicAgent from a registered definition name.
 
@@ -517,13 +518,13 @@ class DynamicAgentFactory:
             DynamicAgent instance or None if not found
         """
         registry = get_agent_registry()
-        definition = registry.get_definition(name)
+        definition = await registry.get_definition(name)
         if not definition:
             return None
         return DynamicAgent(definition)
 
 
-def get_dynamic_agent(name: str) -> DynamicAgent | None:
+async def get_dynamic_agent(name: str) -> DynamicAgent | None:
     """
     Get a dynamic agent by name.
 
@@ -533,10 +534,10 @@ def get_dynamic_agent(name: str) -> DynamicAgent | None:
     Returns:
         DynamicAgent instance or None
     """
-    return DynamicAgentFactory.create_from_name(name)
+    return await DynamicAgentFactory.create_from_name(name)
 
 
-def get_all_available_agents() -> list[SubAgentBase]:
+async def get_all_available_agents() -> list[SubAgentBase]:
     """
     Get all available agents (static and dynamic).
 
@@ -551,7 +552,7 @@ def get_all_available_agents() -> list[SubAgentBase]:
         agents.append(agent)
 
     # Get dynamic agents
-    for definition in registry.list_enabled_definitions():
+    for definition in await registry.list_enabled_definitions():
         agents.append(DynamicAgentFactory.create(definition))
 
     # Sort by priority (higher first)

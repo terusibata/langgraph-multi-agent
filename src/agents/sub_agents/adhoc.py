@@ -38,10 +38,13 @@ class AdHocAgent:
         self.model_id = model_id or get_settings().sub_agent_model_id
         self._tools: list[ToolBase] = []
         self._tool_map: dict[str, ToolBase] = {}
-        self._initialize_tools()
+        self._initialized = False
 
-    def _initialize_tools(self) -> None:
+    async def _initialize_tools(self) -> None:
         """Initialize tools from the specification."""
+        if self._initialized:
+            return
+
         tool_registry = get_tool_registry()
 
         for tool_name in self.spec.tools:
@@ -50,7 +53,7 @@ class AdHocAgent:
 
             if not tool:
                 # Try to create dynamic tool
-                definition = tool_registry.get_definition(tool_name)
+                definition = await tool_registry.get_definition(tool_name)
                 if definition:
                     tool = DynamicToolFactory.create(definition)
 
@@ -63,6 +66,8 @@ class AdHocAgent:
                     agent=self.name,
                     tool=tool_name,
                 )
+
+        self._initialized = True
 
     def get_tool(self, name: str) -> ToolBase | None:
         """Get a tool by name."""
@@ -120,6 +125,9 @@ class AdHocAgent:
         Returns:
             SubAgentResult with execution status and data
         """
+        # Initialize tools if not already done
+        await self._initialize_tools()
+
         started_at = datetime.now(timezone.utc)
         task_params = task_params or {}
 
