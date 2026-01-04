@@ -166,6 +166,7 @@ class ThreadManager:
         input_tokens: int,
         output_tokens: int,
         cost_usd: float,
+        title: str | None = None,
     ) -> ThreadState:
         """
         Update thread metrics after processing.
@@ -175,6 +176,7 @@ class ThreadManager:
             input_tokens: Input tokens used
             output_tokens: Output tokens used
             cost_usd: Cost in USD
+            title: Thread title (for new threads)
 
         Returns:
             Updated ThreadState
@@ -204,17 +206,21 @@ class ThreadManager:
             else:
                 new_status = "active"
 
+            # Build update data
+            update_data = {
+                "total_tokens_used": new_total,
+                "total_cost_usd": new_cost,
+                "message_count": new_count,
+                "context_tokens_used": new_context,
+                "status": new_status,
+            }
+
+            # Add title if provided
+            if title is not None:
+                update_data["title"] = title
+
             # Update in database
-            await repo.update_thread(
-                thread_id,
-                {
-                    "total_tokens_used": new_total,
-                    "total_cost_usd": new_cost,
-                    "message_count": new_count,
-                    "context_tokens_used": new_context,
-                    "status": new_status,
-                },
-            )
+            await repo.update_thread(thread_id, update_data)
 
         logger.debug(
             "thread_metrics_updated",

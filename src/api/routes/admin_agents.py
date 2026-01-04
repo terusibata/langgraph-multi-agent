@@ -102,6 +102,8 @@ async def create_agent(
         retry_strategy=body.retry_strategy.model_dump() if body.retry_strategy else None,
         priority=body.priority,
         enabled=body.enabled,
+        response_format=body.response_format,
+        response_schema=body.response_schema,
         metadata=body.metadata,
     )
 

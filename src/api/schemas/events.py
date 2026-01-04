@@ -261,6 +261,18 @@ class SessionMetrics(BaseModel):
     totals: TotalMetrics = Field(..., description="Aggregated metrics")
 
 
+class ResourceData(BaseModel):
+    """Unified resource data format."""
+
+    id: str = Field(..., description="Resource ID or system ID")
+    type: str = Field(..., description="Resource type (e.g., knowledge_base, document, catalog)")
+    title: str = Field(..., description="Resource title")
+    content: str | None = Field(default=None, description="Resource content or snippet")
+    score: float | None = Field(default=None, description="Relevance score (if available)")
+    tool_name: str = Field(..., description="Tool that retrieved this resource")
+    metadata: dict = Field(default_factory=dict, description="Additional metadata")
+
+
 class ResponseData(BaseModel):
     """Final response data."""
 
@@ -288,6 +300,7 @@ class SessionCompleteData(BaseModel):
 
     session_id: str = Field(..., description="Session identifier")
     thread_id: str = Field(..., description="Thread identifier")
+    title: str | None = Field(default=None, description="Thread title (generated for new threads)")
     response: ResponseData = Field(..., description="Final response")
     execution_summary: ExecutionSummary = Field(
         ...,
@@ -295,6 +308,10 @@ class SessionCompleteData(BaseModel):
     )
     metrics: SessionMetrics = Field(..., description="Session metrics")
     thread_state: ThreadStateData = Field(..., description="Thread state")
+    resources: list[ResourceData] = Field(
+        default_factory=list,
+        description="Resources retrieved during execution",
+    )
 
 
 class SessionCompleteEvent(BaseEvent):

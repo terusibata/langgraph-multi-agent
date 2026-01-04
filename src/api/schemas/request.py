@@ -74,6 +74,14 @@ class AgentStreamRequest(BaseModel):
         default=False,
         description="Enable direct tool mode (MainAgent uses tools directly, no sub-agents)",
     )
+    response_format: Literal["text", "json"] | None = Field(
+        default=None,
+        description="Response format (text or json)",
+    )
+    response_schema: dict | None = Field(
+        default=None,
+        description="JSON schema for response validation (required when response_format is json)",
+    )
 
     model_config = {
         "json_schema_extra": {

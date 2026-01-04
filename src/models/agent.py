@@ -34,6 +34,8 @@ class AgentModel(Base, TimestampMixin):
     )
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    response_format: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    response_schema: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     metadata_: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSON, nullable=False, default=dict
     )
@@ -51,6 +53,8 @@ class AgentModel(Base, TimestampMixin):
             "retry_strategy": self.retry_strategy,
             "priority": self.priority,
             "enabled": self.enabled,
+            "response_format": self.response_format,
+            "response_schema": self.response_schema,
             "metadata": self.metadata_,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
@@ -75,6 +79,8 @@ class AgentModel(Base, TimestampMixin):
             }),
             priority=data.get("priority", 0),
             enabled=data.get("enabled", True),
+            response_format=data.get("response_format"),
+            response_schema=data.get("response_schema"),
             metadata_=data.get("metadata", {}),
             created_at=data.get("created_at", datetime.now(timezone.utc)),
             updated_at=data.get("updated_at", datetime.now(timezone.utc)),
