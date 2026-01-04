@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "langgraph-multi-agent-backend"
+name = "langgraph-multi-agent"
 version = "1.0.0"
 description = "LangGraph Multi-Agent Backend System for Next.js integration"
 readme = "README.md"
