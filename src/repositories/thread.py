@@ -23,12 +23,14 @@ class ThreadRepository:
         self,
         thread_id: str,
         tenant_id: str,
+        title: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> ThreadModel:
         """Create a new thread."""
         thread = ThreadModel(
             thread_id=thread_id,
             tenant_id=tenant_id,
+            title=title,
             status="active",
             total_tokens_used=0,
             total_cost_usd=0.0,
@@ -41,7 +43,7 @@ class ThreadRepository:
         self.session.add(thread)
         await self.session.commit()
         await self.session.refresh(thread)
-        logger.info("thread_created", thread_id=thread_id, tenant_id=tenant_id)
+        logger.info("thread_created", thread_id=thread_id, tenant_id=tenant_id, title=title)
         return thread
 
     async def get_thread(self, thread_id: str) -> ThreadModel | None:

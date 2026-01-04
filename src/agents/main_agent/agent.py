@@ -255,3 +255,15 @@ class MainAgent:
             Evaluation summary dictionary
         """
         return self.evaluator.get_evaluation_summary(state["intermediate_evaluation"])
+
+    async def generate_thread_title(self, user_input: str) -> str:
+        """
+        Generate a short Japanese title for a new thread.
+
+        Args:
+            user_input: User's first message
+
+        Returns:
+            Short Japanese title
+        """
+        return await self.synthesizer.generate_thread_title(user_input)

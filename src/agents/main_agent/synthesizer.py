@@ -1,5 +1,6 @@
 """Synthesizer component for MainAgent."""
 
+import json
 from typing import Any, AsyncIterator
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -69,8 +70,12 @@ class Synthesizer:
             state: Current agent state
 
         Returns:
-            Final response string
+            Final response string (may be JSON if response_format='json')
         """
+        # Check if JSON format is requested
+        if state.get("response_format") == "json":
+            return await self._synthesize_json_response(state)
+
         # Check if fast response mode is enabled
         if state.get("fast_response", False):
             return await self._synthesize_fast_response(state)
@@ -307,6 +312,122 @@ class Synthesizer:
 
         return f"### {label}\n\n{str(result.data)[:500]}"
 
+    def _format_resources_for_json(self, sub_agent_results: dict) -> list[dict]:
+        """
+        Format agent results as standardized resource objects for JSON response.
+
+        Returns:
+            List of standardized resource objects
+        """
+        resources = []
+
+        for agent_name, result in sub_agent_results.items():
+            if result.status == "failed" or not result.data:
+                continue
+
+            # Determine tool_name mapping
+            tool_name_map = {
+                "knowledge_search": "frontend_servicenow_search",
+                "vector_search": "frontend_vector_search",
+                "catalog": "frontend_catalog_search",
+            }
+            tool_name = tool_name_map.get(agent_name, f"frontend_{agent_name}")
+
+            # Process result data
+            if isinstance(result.data, list):
+                for item in result.data:
+                    if isinstance(item, dict):
+                        resource = {
+                            "id": item.get("sys_id", item.get("id", item.get("kb_number", ""))),
+                            "type": "knowledge_base" if "knowledge" in agent_name else "document",
+                            "title": item.get("title", item.get("name", "")),
+                            "content": item.get("content", item.get("description", item.get("snippet", ""))),
+                            "score": item.get("score", item.get("relevance", None)),
+                            "tool_name": tool_name,
+                            "metadata": {
+                                k: v for k, v in item.items()
+                                if k not in ["id", "sys_id", "kb_number", "title", "name", "content", "description", "snippet", "score", "relevance"]
+                            }
+                        }
+                        resources.append(resource)
+            elif isinstance(result.data, dict):
+                resource = {
+                    "id": result.data.get("sys_id", result.data.get("id", result.data.get("kb_number", ""))),
+                    "type": "knowledge_base" if "knowledge" in agent_name else "document",
+                    "title": result.data.get("title", result.data.get("name", "")),
+                    "content": result.data.get("content", result.data.get("description", result.data.get("snippet", ""))),
+                    "score": result.data.get("score", result.data.get("relevance", None)),
+                    "tool_name": tool_name,
+                    "metadata": {
+                        k: v for k, v in result.data.items()
+                        if k not in ["id", "sys_id", "kb_number", "title", "name", "content", "description", "snippet", "score", "relevance"]
+                    }
+                }
+                resources.append(resource)
+
+        return resources
+
+    async def generate_thread_title(self, user_input: str) -> str:
+        """
+        Generate a short Japanese title for the thread based on the user's first message.
+
+        Args:
+            user_input: User's first message
+
+        Returns:
+            Short Japanese title (max 50 characters)
+        """
+        prompt_content = f"""以下のユーザーの最初のメッセージから、会話のタイトルを生成してください。
+
+ユーザーのメッセージ:
+{user_input}
+
+要件:
+- 日本語で簡潔に（最大30文字）
+- メッセージの主要なトピックを反映
+- 「〜について」のような不自然な表現は避ける
+- 質問形式ではなく、トピックを表す名詞句で
+
+例:
+- ユーザー: "プリンターに接続できない不具合が発生していますが、どうすればいいですか？"
+  タイトル: "プリンター接続トラブル"
+
+- ユーザー: "VPNの設定方法を教えてください"
+  タイトル: "VPN設定方法"
+
+タイトルのみを返してください（説明や記号は不要）。"""
+
+        messages_list = [
+            SystemMessage(content="あなたは会話のタイトルを生成する専門アシスタントです。簡潔で分かりやすい日本語のタイトルを生成してください。"),
+            HumanMessage(content=prompt_content)
+        ]
+
+        prompt = ChatPromptTemplate.from_messages(messages_list)
+
+        try:
+            chain = prompt | self.llm
+            result = await chain.ainvoke({})
+
+            title = result.content if hasattr(result, 'content') else str(result)
+
+            # Clean and trim the title
+            title = title.strip().strip('"').strip("'")
+
+            # Limit to 50 characters
+            if len(title) > 50:
+                title = title[:50]
+
+            logger.info("thread_title_generated", title=title)
+            return title
+
+        except Exception as e:
+            logger.error("thread_title_generation_failed", error=str(e))
+            # Fallback: use first 30 characters of user input
+            fallback_title = user_input[:30].strip()
+            if len(user_input) > 30:
+                fallback_title += "..."
+            return fallback_title
+
     def _format_dict(self, data: dict) -> str:
         """Format a dictionary for display."""
         lines = []
@@ -449,6 +570,82 @@ class Synthesizer:
                 error=str(e),
             )
             return "申し訳ございません。現在、回答の生成中にエラーが発生しました。しばらくしてから再度お試しください。"
+
+    async def _synthesize_json_response(self, state: AgentState) -> str:
+        """
+        Generate JSON-formatted response based on response_schema.
+
+        Args:
+            state: Current agent state
+
+        Returns:
+            JSON string response
+        """
+        user_input = state["user_input"]
+        sub_agent_results = state["sub_agent_results"]
+        response_schema = state.get("response_schema", {})
+
+        # Format resources in standardized format
+        resources = self._format_resources_for_json(sub_agent_results)
+
+        # Build the prompt to generate JSON response
+        schema_str = json.dumps(response_schema, ensure_ascii=False, indent=2) if response_schema else "{}"
+
+        prompt_content = f"""ユーザーの質問: {user_input}
+
+検索されたリソース:
+{json.dumps(resources, ensure_ascii=False, indent=2)}
+
+以下のJSONスキーマに従って、ユーザーの質問に対する回答をJSON形式で生成してください:
+{schema_str}
+
+要件:
+- 必ず有効なJSON形式で応答してください
+- スキーマで定義されたフィールドのみを含めてください
+- リソースがある場合は、それらの情報も含めてください
+- 日本語で回答してください"""
+
+        messages_list = [
+            SystemMessage(content="あなたは構造化されたJSON応答を生成する専門アシスタントです。必ず有効なJSON形式で回答してください。"),
+            HumanMessage(content=prompt_content)
+        ]
+
+        prompt = ChatPromptTemplate.from_messages(messages_list)
+
+        try:
+            chain = prompt | self.llm
+            result = await chain.ainvoke({})
+
+            response = result.content if hasattr(result, 'content') else str(result)
+
+            # Try to parse and validate JSON
+            try:
+                json_response = json.loads(response)
+                # Add resources to the response if not already included and if schema allows
+                if "resources" in response_schema.get("properties", {}) and "resources" not in json_response:
+                    json_response["resources"] = resources
+                return json.dumps(json_response, ensure_ascii=False, indent=2)
+            except json.JSONDecodeError:
+                # If LLM didn't return valid JSON, wrap it in a basic structure
+                logger.warning("llm_returned_invalid_json", session_id=state["session_id"])
+                fallback_response = {
+                    "answer": response,
+                    "resources": resources
+                }
+                return json.dumps(fallback_response, ensure_ascii=False, indent=2)
+
+        except Exception as e:
+            logger.error(
+                "json_synthesis_failed",
+                session_id=state["session_id"],
+                error=str(e),
+            )
+            # Return error in JSON format
+            error_response = {
+                "error": "応答の生成中にエラーが発生しました",
+                "resources": resources
+            }
+            return json.dumps(error_response, ensure_ascii=False, indent=2)
 
     async def _synthesize_fast_response_stream(self, state: AgentState) -> AsyncIterator[str]:
         """

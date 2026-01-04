@@ -307,6 +307,13 @@ class AgentState(TypedDict):
     fast_response: bool
     direct_tool_mode: bool
 
+    # Response format options
+    response_format: str | None
+    response_schema: dict | None
+
+    # Thread title (for new threads)
+    thread_title: str | None
+
     # Final response
     final_response: str | None
 
@@ -319,6 +326,8 @@ def create_initial_state(
     file_inputs: list[FileInput] | None = None,
     fast_response: bool = False,
     direct_tool_mode: bool = False,
+    response_format: str | None = None,
+    response_schema: dict | None = None,
 ) -> AgentState:
     """
     Create an initial agent state.
@@ -331,6 +340,8 @@ def create_initial_state(
         file_inputs: Optional file attachments
         fast_response: Enable fast response mode (no sub-agents or tools)
         direct_tool_mode: Enable direct tool mode (MainAgent uses tools directly)
+        response_format: Response format ('text' or 'json')
+        response_schema: JSON schema for structured response
 
     Returns:
         Initial AgentState
@@ -352,5 +363,8 @@ def create_initial_state(
         current_agent=None,
         fast_response=fast_response,
         direct_tool_mode=direct_tool_mode,
+        response_format=response_format,
+        response_schema=response_schema,
+        thread_title=None,
         final_response=None,
     )

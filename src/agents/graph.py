@@ -154,6 +154,26 @@ class MultiAgentGraph:
             HumanMessage(content=state["user_input"])
         )
 
+        # Generate thread title for new threads (message_count == 0)
+        thread_state = await self.thread_manager.get_thread_state(state["thread_id"])
+        if thread_state is None or thread_state.message_count == 0:
+            # This is a new thread, generate a title
+            try:
+                title = await self.main_agent.generate_thread_title(state["user_input"])
+                state["thread_title"] = title
+                logger.info(
+                    "thread_title_generated_for_new_thread",
+                    session_id=state["session_id"],
+                    thread_id=state["thread_id"],
+                    title=title,
+                )
+            except Exception as e:
+                logger.error(
+                    "thread_title_generation_failed",
+                    session_id=state["session_id"],
+                    error=str(e),
+                )
+
         # Create execution plan (may include ad-hoc agents)
         state = await self.main_agent.plan(state)
 
@@ -483,6 +503,8 @@ class MultiAgentGraph:
         checkpointer: Any = None,
         fast_response: bool = False,
         direct_tool_mode: bool = False,
+        response_format: str | None = None,
+        response_schema: dict | None = None,
     ) -> AgentState:
         """
         Run the graph synchronously.
@@ -514,6 +536,8 @@ class MultiAgentGraph:
             thread_id=thread_id,
             fast_response=fast_response,
             direct_tool_mode=direct_tool_mode,
+            response_format=None,
+            response_schema=None,
         )
 
         # Create execution session
@@ -525,12 +549,13 @@ class MultiAgentGraph:
 
         final_state = await compiled.ainvoke(state, config)
 
-        # Update thread metrics
+        # Update thread metrics (include title if generated)
         await self.thread_manager.update_thread_metrics(
             final_state["thread_id"],
             final_state["metrics"].total_input_tokens,
             final_state["metrics"].total_output_tokens,
             final_state["metrics"].total_cost_usd,
+            title=final_state.get("thread_title"),
         )
 
         return final_state
@@ -544,6 +569,8 @@ class MultiAgentGraph:
         checkpointer: Any = None,
         fast_response: bool = False,
         direct_tool_mode: bool = False,
+        response_format: str | None = None,
+        response_schema: dict | None = None,
     ) -> AsyncIterator[dict]:
         """
         Run the graph with SSE streaming.
@@ -556,6 +583,8 @@ class MultiAgentGraph:
             checkpointer: Optional checkpointer
             fast_response: Enable fast response mode (no sub-agents or tools)
             direct_tool_mode: Enable direct tool mode (MainAgent uses tools directly)
+            response_format: Response format ('text' or 'json')
+            response_schema: JSON schema for structured response
 
         Yields:
             Event dicts for sse-starlette
@@ -577,6 +606,8 @@ class MultiAgentGraph:
                 thread_id=thread_id,
                 fast_response=fast_response,
                 direct_tool_mode=direct_tool_mode,
+                response_format=response_format,
+                response_schema=response_schema,
             )
 
             # Create execution session
@@ -601,12 +632,13 @@ class MultiAgentGraph:
             # Get final state
             final_state = await compiled.aget_state(config)
 
-            # Update thread and emit complete
+            # Update thread and emit complete (include title if generated)
             thread_state = await self.thread_manager.update_thread_metrics(
                 final_state.values["thread_id"],
                 final_state.values["metrics"].total_input_tokens,
                 final_state.values["metrics"].total_output_tokens,
                 final_state.values["metrics"].total_cost_usd,
+                title=final_state.values.get("thread_title"),
             )
 
             await self._emit_session_complete(
@@ -765,6 +797,10 @@ class MultiAgentGraph:
                 "thread_total_cost_usd": thread_state.thread_total_cost_usd,
             },
         }
+
+        # Add thread title if it was generated
+        if state.get("thread_title"):
+            complete_data["thread_title"] = state["thread_title"]
 
         await sse_manager.emit_session_complete(complete_data)
 

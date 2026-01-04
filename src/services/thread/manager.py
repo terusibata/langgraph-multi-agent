@@ -21,6 +21,7 @@ class ThreadInfo:
         self,
         thread_id: str,
         tenant_id: str,
+        title: str | None = None,
         status: Literal["active", "warning", "locked"] = "active",
         created_at: datetime | None = None,
         updated_at: datetime | None = None,
@@ -32,6 +33,7 @@ class ThreadInfo:
     ):
         self.thread_id = thread_id
         self.tenant_id = tenant_id
+        self.title = title
         self.status = status
         self.created_at = created_at or datetime.now(timezone.utc)
         self.updated_at = updated_at or datetime.now(timezone.utc)
@@ -47,6 +49,7 @@ class ThreadInfo:
         return cls(
             thread_id=model.thread_id,
             tenant_id=model.tenant_id,
+            title=model.title,
             status=model.status,
             created_at=model.created_at,
             updated_at=model.updated_at,
@@ -166,6 +169,7 @@ class ThreadManager:
         input_tokens: int,
         output_tokens: int,
         cost_usd: float,
+        title: str | None = None,
     ) -> ThreadState:
         """
         Update thread metrics after processing.
@@ -175,6 +179,7 @@ class ThreadManager:
             input_tokens: Input tokens used
             output_tokens: Output tokens used
             cost_usd: Cost in USD
+            title: Optional title for the thread (only set for new threads)
 
         Returns:
             Updated ThreadState
@@ -186,7 +191,7 @@ class ThreadManager:
 
             if not thread:
                 # Create new thread record
-                thread = await repo.create_thread(thread_id, "unknown")
+                thread = await repo.create_thread(thread_id, "unknown", title=title)
 
             # Update metrics
             new_total = thread.total_tokens_used + input_tokens + output_tokens
@@ -204,17 +209,21 @@ class ThreadManager:
             else:
                 new_status = "active"
 
+            # Prepare updates
+            updates = {
+                "total_tokens_used": new_total,
+                "total_cost_usd": new_cost,
+                "message_count": new_count,
+                "context_tokens_used": new_context,
+                "status": new_status,
+            }
+
+            # Add title if provided and thread doesn't have one
+            if title and not thread.title:
+                updates["title"] = title
+
             # Update in database
-            await repo.update_thread(
-                thread_id,
-                {
-                    "total_tokens_used": new_total,
-                    "total_cost_usd": new_cost,
-                    "message_count": new_count,
-                    "context_tokens_used": new_context,
-                    "status": new_status,
-                },
-            )
+            await repo.update_thread(thread_id, updates)
 
         logger.debug(
             "thread_metrics_updated",
