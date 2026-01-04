@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import AsyncGenerator
 
-from sqlalchemy import DateTime, func
+from sqlalchemy import DateTime, func, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -77,10 +77,18 @@ async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db() -> None:
-    """Initialize database tables."""
+    """Initialize database connection and verify it's working.
+
+    Note: Table creation is managed by Alembic migrations.
+    Run 'alembic upgrade head' to create/update database schema.
+    """
     engine = get_async_engine()
+    # Test database connection
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text("SELECT 1"))
+
+    # Note: We don't call Base.metadata.create_all() here
+    # All schema changes are managed through Alembic migrations
 
 
 async def close_db() -> None:
