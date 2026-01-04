@@ -9,6 +9,7 @@ from src.agents.main_agent.planner import Planner
 from src.agents.main_agent.router import Router
 from src.agents.main_agent.evaluator import Evaluator
 from src.agents.main_agent.synthesizer import Synthesizer
+from src.agents.main_agent.direct_tool_executor import DirectToolExecutor
 from src.config import get_settings
 
 logger = structlog.get_logger()
@@ -53,6 +54,7 @@ class MainAgent:
         self.router = Router()
         self.evaluator = Evaluator(llm)
         self.synthesizer = Synthesizer(llm)
+        self.direct_tool_executor = DirectToolExecutor(llm)
 
         logger.info(
             "main_agent_initialized",

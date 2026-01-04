@@ -257,7 +257,15 @@ class MultiAgentGraph:
         """Synthesis node - generates final response."""
         logger.info("node_synthesize", session_id=state["session_id"])
 
-        state = await self.main_agent.synthesize(state)
+        # Check if direct tool mode is enabled
+        if state.get("direct_tool_mode", False) and not state.get("fast_response", False):
+            # Use direct tool executor
+            logger.info("using_direct_tool_executor", session_id=state["session_id"])
+            response = await self.main_agent.direct_tool_executor.execute(state)
+            state["final_response"] = response
+        else:
+            # Normal synthesis (includes fast response mode handling)
+            state = await self.main_agent.synthesize(state)
 
         # Finalize metrics
         state["metrics"].finalize()
@@ -269,6 +277,17 @@ class MultiAgentGraph:
 
     def _route_after_plan(self, state: AgentState) -> str:
         """Route after planning."""
+        # Fast response mode: skip execution and go directly to synthesis
+        if state.get("fast_response", False):
+            logger.info("fast_response_mode_activated", session_id=state["session_id"])
+            return "synthesize"
+
+        # Direct tool mode: skip plan execution and use direct tool mode in synthesize
+        if state.get("direct_tool_mode", False):
+            logger.info("direct_tool_mode_activated", session_id=state["session_id"])
+            return "synthesize"
+
+        # Normal mode: check if there are tasks to execute
         if not state["execution_plan"].tasks:
             return "synthesize"
         return "execute_agents"
@@ -462,6 +481,8 @@ class MultiAgentGraph:
         request_context: RequestContext,
         thread_id: str | None = None,
         checkpointer: Any = None,
+        fast_response: bool = False,
+        direct_tool_mode: bool = False,
     ) -> AgentState:
         """
         Run the graph synchronously.
@@ -471,6 +492,8 @@ class MultiAgentGraph:
             request_context: Request context with auth info
             thread_id: Optional thread ID for continuation
             checkpointer: Optional checkpointer
+            fast_response: Enable fast response mode (no sub-agents or tools)
+            direct_tool_mode: Enable direct tool mode (MainAgent uses tools directly)
 
         Returns:
             Final AgentState
@@ -489,6 +512,8 @@ class MultiAgentGraph:
             user_input=user_input,
             request_context=request_context,
             thread_id=thread_id,
+            fast_response=fast_response,
+            direct_tool_mode=direct_tool_mode,
         )
 
         # Create execution session
@@ -517,6 +542,8 @@ class MultiAgentGraph:
         sse_manager: SSEManager,
         thread_id: str | None = None,
         checkpointer: Any = None,
+        fast_response: bool = False,
+        direct_tool_mode: bool = False,
     ) -> AsyncIterator[dict]:
         """
         Run the graph with SSE streaming.
@@ -527,6 +554,8 @@ class MultiAgentGraph:
             sse_manager: SSE manager for events
             thread_id: Optional thread ID
             checkpointer: Optional checkpointer
+            fast_response: Enable fast response mode (no sub-agents or tools)
+            direct_tool_mode: Enable direct tool mode (MainAgent uses tools directly)
 
         Yields:
             Event dicts for sse-starlette
@@ -546,6 +575,8 @@ class MultiAgentGraph:
                 user_input=user_input,
                 request_context=request_context,
                 thread_id=thread_id,
+                fast_response=fast_response,
+                direct_tool_mode=direct_tool_mode,
             )
 
             # Create execution session
@@ -635,7 +666,13 @@ class MultiAgentGraph:
             await sse_manager.emit_evaluation(evaluation)
 
         elif node_name == "synthesize":
-            if state.get("final_response"):
+            # For direct tool mode or fast response, we need to stream differently
+            if state.get("direct_tool_mode", False) and not state.get("fast_response", False):
+                # Stream using direct tool executor
+                async for token in self.main_agent.direct_tool_executor.execute_stream(state):
+                    await sse_manager.emit_token(token)
+                await sse_manager.emit_token("", finish_reason="stop")
+            elif state.get("final_response"):
                 # Stream the final response as tokens
                 response = state["final_response"]
                 for i in range(0, len(response), 50):

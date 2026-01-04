@@ -29,6 +29,23 @@ SYNTHESIZER_SYSTEM_PROMPT = """あなたはユーザーサポートアシスタ�
 - 長すぎない回答（必要十分な情報量）
 """
 
+FAST_RESPONSE_SYSTEM_PROMPT = """あなたはユーザーサポートアシスタントです。
+ユーザーの質問に対して、あなたの知識のみを使って迅速に回答してください。
+
+回答のガイドライン:
+1. 一般的な知識や経験に基づいて回答
+2. 具体的な解決手順がある場合は番号付きリストで表示
+3. 確信が持てない情報は、その旨を明記
+4. 簡潔で分かりやすい回答を心がける
+5. 技術的すぎない、親しみやすい言葉遣いで説明
+
+フォーマット:
+- 見出しは適切に使用
+- 手順は番号付きリスト
+- 重要な情報は強調
+- 長すぎない回答（必要十分な情報量）
+"""
+
 
 class Synthesizer:
     """
@@ -54,6 +71,10 @@ class Synthesizer:
         Returns:
             Final response string
         """
+        # Check if fast response mode is enabled
+        if state.get("fast_response", False):
+            return await self._synthesize_fast_response(state)
+
         user_input = state["user_input"]
         sub_agent_results = state["sub_agent_results"]
         evaluation = state["intermediate_evaluation"]
@@ -147,6 +168,12 @@ class Synthesizer:
         Yields:
             Response tokens
         """
+        # Check if fast response mode is enabled
+        if state.get("fast_response", False):
+            async for token in self._synthesize_fast_response_stream(state):
+                yield token
+            return
+
         user_input = state["user_input"]
         sub_agent_results = state["sub_agent_results"]
         evaluation = state["intermediate_evaluation"]
@@ -343,3 +370,155 @@ class Synthesizer:
 2. より具体的な内容でお問い合わせください
 
 それでも解決しない場合は、サービスカタログから適切な申請フォームをご利用ください。"""
+
+    async def _synthesize_fast_response(self, state: AgentState) -> str:
+        """
+        Generate fast response using only LLM knowledge (no sub-agents or tools).
+
+        Args:
+            state: Current agent state
+
+        Returns:
+            Fast response string
+        """
+        user_input = state["user_input"]
+        messages = state["messages"]
+
+        # Build conversation history context (last 10 messages, excluding current)
+        conversation_history = self._format_conversation_history(messages[:-1])
+
+        # Check if we should use prompt caching based on model support
+        model_id = getattr(self.llm, 'model_id', None)
+        use_caching = should_use_prompt_caching(model_id) if model_id else False
+
+        # Build prompt with caching enabled for system prompt if supported
+        messages_list = []
+
+        if use_caching:
+            messages_list.append(
+                SystemMessage(
+                    content=[
+                        {"type": "text", "text": FAST_RESPONSE_SYSTEM_PROMPT},
+                        {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
+                    ]
+                )
+            )
+
+            # Add conversation history with caching if available
+            if conversation_history:
+                messages_list.append(
+                    SystemMessage(
+                        content=[
+                            {"type": "text", "text": f"## 会話履歴\n\n{conversation_history}"},
+                            {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
+                        ]
+                    )
+                )
+        else:
+            messages_list.append(SystemMessage(content=FAST_RESPONSE_SYSTEM_PROMPT))
+
+            # Add conversation history without caching if available
+            if conversation_history:
+                messages_list.append(
+                    SystemMessage(content=f"## 会話履歴\n\n{conversation_history}")
+                )
+
+        # Add current request
+        messages_list.append(HumanMessage(content=user_input))
+
+        prompt = ChatPromptTemplate.from_messages(messages_list)
+
+        try:
+            chain = prompt | self.llm
+            result = await chain.ainvoke({})
+
+            response = result.content if hasattr(result, 'content') else str(result)
+
+            logger.info(
+                "fast_response_complete",
+                session_id=state["session_id"],
+                response_length=len(response),
+            )
+
+            return response
+
+        except Exception as e:
+            logger.error(
+                "fast_response_failed",
+                session_id=state["session_id"],
+                error=str(e),
+            )
+            return "申し訳ございません。現在、回答の生成中にエラーが発生しました。しばらくしてから再度お試しください。"
+
+    async def _synthesize_fast_response_stream(self, state: AgentState) -> AsyncIterator[str]:
+        """
+        Generate fast response with streaming (no sub-agents or tools).
+
+        Args:
+            state: Current agent state
+
+        Yields:
+            Response tokens
+        """
+        user_input = state["user_input"]
+        messages = state["messages"]
+
+        # Build conversation history context (last 10 messages, excluding current)
+        conversation_history = self._format_conversation_history(messages[:-1])
+
+        # Check if we should use prompt caching based on model support
+        model_id = getattr(self.llm, 'model_id', None)
+        use_caching = should_use_prompt_caching(model_id) if model_id else False
+
+        # Build prompt with caching enabled for system prompt if supported
+        messages_list = []
+
+        if use_caching:
+            messages_list.append(
+                SystemMessage(
+                    content=[
+                        {"type": "text", "text": FAST_RESPONSE_SYSTEM_PROMPT},
+                        {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
+                    ]
+                )
+            )
+
+            # Add conversation history with caching if available
+            if conversation_history:
+                messages_list.append(
+                    SystemMessage(
+                        content=[
+                            {"type": "text", "text": f"## 会話履歴\n\n{conversation_history}"},
+                            {"type": "text", "text": "", "cache_control": {"type": "ephemeral"}},
+                        ]
+                    )
+                )
+        else:
+            messages_list.append(SystemMessage(content=FAST_RESPONSE_SYSTEM_PROMPT))
+
+            # Add conversation history without caching if available
+            if conversation_history:
+                messages_list.append(
+                    SystemMessage(content=f"## 会話履歴\n\n{conversation_history}")
+                )
+
+        # Add current request
+        messages_list.append(HumanMessage(content=user_input))
+
+        prompt = ChatPromptTemplate.from_messages(messages_list)
+
+        try:
+            chain = prompt | self.llm
+            async for chunk in chain.astream({}):
+                if hasattr(chunk, 'content'):
+                    yield chunk.content
+                else:
+                    yield str(chunk)
+
+        except Exception as e:
+            logger.error(
+                "fast_response_stream_failed",
+                session_id=state["session_id"],
+                error=str(e),
+            )
+            yield "申し訳ございません。現在、回答の生成中にエラーが発生しました。しばらくしてから再度お試しください。"

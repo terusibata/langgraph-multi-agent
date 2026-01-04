@@ -66,6 +66,14 @@ class AgentStreamRequest(BaseModel):
         default=None,
         description="Company-specific context (optional)",
     )
+    fast_response: bool = Field(
+        default=False,
+        description="Enable fast response mode (MainAgent only, no sub-agents or tools)",
+    )
+    direct_tool_mode: bool = Field(
+        default=False,
+        description="Enable direct tool mode (MainAgent uses tools directly, no sub-agents)",
+    )
 
     model_config = {
         "json_schema_extra": {
