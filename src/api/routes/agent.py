@@ -95,6 +95,8 @@ async def stream_agent(
         thread_id=body.thread_id,
         message_length=len(body.message),
         model_id=body.model_id,
+        fast_response=body.fast_response,
+        direct_tool_mode=body.direct_tool_mode,
     )
 
     # Create graph and SSE manager
@@ -111,6 +113,8 @@ async def stream_agent(
             request_context=agent_context,
             sse_manager=sse_manager,
             thread_id=body.thread_id,
+            fast_response=body.fast_response,
+            direct_tool_mode=body.direct_tool_mode,
         ):
             yield event
 
@@ -171,6 +175,8 @@ async def invoke_agent(
         tenant_id=context.tenant_id,
         user_id=context.user_id,
         thread_id=body.thread_id,
+        fast_response=body.fast_response,
+        direct_tool_mode=body.direct_tool_mode,
     )
 
     try:
@@ -180,6 +186,8 @@ async def invoke_agent(
             user_input=body.message,
             request_context=agent_context,
             thread_id=body.thread_id,
+            fast_response=body.fast_response,
+            direct_tool_mode=body.direct_tool_mode,
         )
 
         # Build response
