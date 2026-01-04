@@ -11,6 +11,7 @@
 - **会社コンテキスト**: 企業のビジョン・用語・参考情報を考慮した応答生成
 - **Admin API**: API経由でエージェント・ツールを動的に管理
 - **エージェントテスト**: サンドボックス環境でエージェントをテスト実行可能
+- **高速応答モード**: 用途に応じて最適な実行モードを選択可能（通常/高速/ダイレクトツール）
 
 ## アーキテクチャ
 
@@ -78,6 +79,46 @@ python -m src.main
 - `POST /api/v1/agent/invoke` - 同期実行
 - `GET /api/v1/agents` - 利用可能エージェント一覧
 - `GET /api/v1/tools` - 利用可能ツール一覧
+
+#### 実行モードオプション
+
+リクエストボディに以下のフラグを指定することで、実行モードを切り替えられます：
+
+| フラグ | 説明 | 用途 | レスポンス速度 |
+|--------|------|------|----------------|
+| `fast_response: true` | 高速回答モード（sub agent/tools不使用） | 一般的な知識で回答可能な質問 | 最速 |
+| `direct_tool_mode: true` | ダイレクトツールモード（MainAgentが直接tools使用） | ツールが必要だが高速に回答したい場合 | 高速 |
+| 両方false（デフォルト） | 通常モード（sub agentを使用） | 詳細な情報収集が必要な場合 | 標準 |
+
+**使用例:**
+
+```bash
+# 高速回答モード（最速）
+curl -X POST http://localhost:8000/api/v1/agent/stream \
+  -H "Content-Type: application/json" \
+  -H "X-Access-Key: your-access-key" \
+  -d '{
+    "message": "プリンターに接続できない問題の一般的な対処法は？",
+    "fast_response": true
+  }'
+
+# ダイレクトツールモード（高速 + ツール使用）
+curl -X POST http://localhost:8000/api/v1/agent/stream \
+  -H "Content-Type: application/json" \
+  -H "X-Access-Key: your-access-key" \
+  -d '{
+    "message": "エラーコードE500について調べて",
+    "direct_tool_mode": true
+  }'
+
+# 通常モード（詳細な情報収集）
+curl -X POST http://localhost:8000/api/v1/agent/stream \
+  -H "Content-Type: application/json" \
+  -H "X-Access-Key: your-access-key" \
+  -d '{
+    "message": "システムにアクセスできない問題を解決したい"
+  }'
+```
 
 ### スレッド管理
 
