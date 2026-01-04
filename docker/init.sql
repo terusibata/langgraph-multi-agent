@@ -6,15 +6,16 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- Create custom tables for thread management
 CREATE TABLE IF NOT EXISTS threads (
-    thread_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    thread_id VARCHAR(64) PRIMARY KEY,
     tenant_id VARCHAR(255) NOT NULL,
-    status VARCHAR(50) DEFAULT 'active',
+    title VARCHAR(100),
+    status VARCHAR(16) DEFAULT 'active',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    total_tokens_used BIGINT DEFAULT 0,
-    total_cost_usd DECIMAL(10, 6) DEFAULT 0,
+    total_tokens_used INTEGER DEFAULT 0,
+    total_cost_usd DOUBLE PRECISION DEFAULT 0,
     message_count INTEGER DEFAULT 0,
-    context_tokens_used BIGINT DEFAULT 0,
+    context_tokens_used INTEGER DEFAULT 0,
     metadata JSONB DEFAULT '{}'::jsonb
 );
 
@@ -25,15 +26,15 @@ CREATE INDEX IF NOT EXISTS idx_threads_created_at ON threads(created_at DESC);
 
 -- Create session metrics table
 CREATE TABLE IF NOT EXISTS session_metrics (
-    session_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    thread_id UUID REFERENCES threads(thread_id) ON DELETE CASCADE,
+    session_id VARCHAR(64) PRIMARY KEY,
+    thread_id VARCHAR(64) REFERENCES threads(thread_id) ON DELETE CASCADE,
     tenant_id VARCHAR(255) NOT NULL,
     started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     completed_at TIMESTAMP WITH TIME ZONE,
     duration_ms INTEGER,
     input_tokens INTEGER DEFAULT 0,
     output_tokens INTEGER DEFAULT 0,
-    total_cost_usd DECIMAL(10, 6) DEFAULT 0,
+    total_cost_usd DOUBLE PRECISION DEFAULT 0,
     llm_call_count INTEGER DEFAULT 0,
     tool_call_count INTEGER DEFAULT 0,
     agents_executed JSONB DEFAULT '[]'::jsonb,
