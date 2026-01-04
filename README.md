@@ -51,11 +51,14 @@ MainAgent (Supervisor)
 # 1. env作成
 cp .env.example .env
 
+# 2. dockerフォルダへ移動
+cd docker
+
 # 2. Docker起動
-docker-compose up -d
+docker compose up -d
 
 # 3. マイグレーション（コンテナ内）
-docker-compose exec api alembic upgrade head
+docker compose exec api alembic upgrade head
 
 # 4. ヘルスチェック
 curl http://localhost:8000/health
