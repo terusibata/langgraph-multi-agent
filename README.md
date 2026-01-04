@@ -27,9 +27,10 @@ MainAgent (Supervisor)
 ```
 
 **エージェントの種類:**
-- **静的エージェント**: Pythonで実装、起動時に登録（例: knowledge_search, vector_search, catalog）
-- **動的エージェント**: Admin APIで作成、DBに保存
+- **動的エージェント**: Admin APIで作成、DBに保存（推奨）
 - **Ad-hocエージェント**: Plannerが実行時に動的生成（仕様はDB保存）
+
+> **Note:** 静的エージェント・ツールのサンプル実装は`examples/`ディレクトリにあります。本番環境では動的ツール・エージェントの使用を推奨します。
 
 ## クイックスタート
 
@@ -177,15 +178,79 @@ alembic revision --autogenerate -m "description"
 | `DEFAULT_MODEL_ID` | - | `claude-3-5-sonnet-20241022-v2:0` | MainAgent |
 | `SUB_AGENT_MODEL_ID` | - | `claude-3-5-haiku-20241022-v1:0` | SubAgent |
 
+## 動的ツールの使用方法
+
+### ツール定義の登録
+
+フロントエンドAPI経由でServiceNow検索を行うツールの例:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/admin/tools \
+  -H "Content-Type: application/json" \
+  -H "X-Access-Key: your-access-key" \
+  -d '{
+    "name": "frontend_servicenow_search",
+    "description": "フロントエンド経由でServiceNow検索",
+    "category": "frontend_api",
+    "parameters": [
+      {
+        "name": "query",
+        "type": "string",
+        "description": "検索クエリ",
+        "required": true
+      }
+    ],
+    "executor": {
+      "type": "http",
+      "url": "https://your-frontend.com/api/servicenow/search",
+      "method": "POST",
+      "auth_type": "custom_header",
+      "auth_config": {
+        "headers": {
+          "X-Session-Token": "{{ context.service_tokens.frontend_session.token }}"
+        }
+      },
+      "body_template": {
+        "query": "{{ params.query }}",
+        "count": 30
+      }
+    },
+    "required_service_token": "frontend_session",
+    "timeout_seconds": 30,
+    "enabled": true
+  }'
+```
+
+### セッショントークンの送信
+
+フロントエンドからエージェントを呼び出す際:
+
+```typescript
+const serviceTokens = {
+  frontend_session: {
+    token: sessionToken,  // フロントエンドで生成
+    expires_at: new Date(Date.now() + 3600000).toISOString()
+  }
+};
+
+const response = await fetch('/api/agent/stream', {
+  headers: {
+    'X-Access-Key': accessKey,
+    'X-Service-Tokens': btoa(JSON.stringify(serviceTokens)),
+  },
+  body: JSON.stringify({ message: 'エラーについて調べて' })
+});
+```
+
+詳細は[examples/tool_definitions/README.md](examples/tool_definitions/README.md)を参照。
+
 ## エージェントテスト機能
 
 サンドボックス環境で安全にエージェントをテスト実行できます。
 
-### テスト例
-
 ```bash
-# 静的エージェントのテスト
-curl -X POST http://localhost:8000/api/v1/admin/agents/static/knowledge_search/test \
+# 動的エージェントのテスト
+curl -X POST http://localhost:8000/api/v1/admin/agents/dynamic/search_agent/test \
   -H "Content-Type: application/json" \
   -d '{
     "test_input": "テストクエリ",
@@ -198,11 +263,11 @@ curl -X POST http://localhost:8000/api/v1/admin/agents/adhoc/test \
   -d '{
     "spec": {
       "name": "test_agent",
-      "purpose": "天気情報を取得",
-      "tools": ["weather_api"],
-      "expected_output": "現在の天気情報"
+      "purpose": "情報検索",
+      "tools": ["frontend_servicenow_search"],
+      "expected_output": "検索結果"
     },
-    "test_input": "東京の天気は?"
+    "test_input": "エラー500について"
   }'
 ```
 
@@ -228,17 +293,19 @@ src/
 │   │   └── synthesizer.py   # 応答生成
 │   ├── sub_agents/
 │   │   ├── adhoc.py         # Ad-hoc実行
-│   │   ├── dynamic.py       # 動的エージェント
-│   │   └── *.py             # 静的エージェント
+│   │   └── dynamic.py       # 動的エージェント
 │   └── tools/
 │       ├── dynamic.py       # 動的ツール
-│       ├── openapi.py       # OpenAPIパーサー
-│       └── */               # 静的ツール
-└── services/
-    ├── agent_testing.py     # エージェントテスト
-    ├── execution/           # 実行制御
-    ├── streaming/           # SSE
-    └── thread/              # スレッド管理
+│       └── openapi.py       # OpenAPIパーサー
+├── services/
+│   ├── agent_testing.py     # エージェントテスト
+│   ├── execution/           # 実行制御
+│   ├── streaming/           # SSE
+│   └── thread/              # スレッド管理
+└── examples/                # サンプル実装
+    ├── agents/              # 静的エージェント例
+    ├── tools/               # 静的ツール例
+    └── tool_definitions/    # 動的ツール定義例
 ```
 
 ## プロンプトキャッシング

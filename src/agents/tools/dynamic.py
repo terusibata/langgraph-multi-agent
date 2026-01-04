@@ -176,7 +176,12 @@ class DynamicTool(ToolBase):
         # Apply URL template substitution
         url = self._apply_template(url, params, context)
 
-        # Build headers
+        # Apply template to headers
+        headers_template = executor.get("headers", {})
+        if headers_template:
+            headers = self._apply_template(headers_template, params, context)
+
+        # Build authentication headers
         if auth_type == "bearer":
             token = context.get_token(self.required_service_token or "default")
             if token:
@@ -197,6 +202,17 @@ class DynamicTool(ToolBase):
                 token = context.get_token(self.required_service_token)
                 if token:
                     headers["Authorization"] = f"Bearer {token}"
+        elif auth_type == "custom_header":
+            # Custom header authentication
+            # Supports multiple headers with template variables
+            custom_headers = auth_config.get("headers", {})
+            for header_name, header_value in custom_headers.items():
+                # Apply template to header value
+                if isinstance(header_value, str):
+                    resolved_value = self._apply_template(header_value, params, context)
+                    headers[header_name] = resolved_value
+                else:
+                    headers[header_name] = str(header_value)
 
         # Build request body
         body = None
@@ -357,21 +373,34 @@ class DynamicTool(ToolBase):
 
     def _apply_template(
         self,
-        template_str: str,
+        template_str: str | dict,
         params: dict,
         context: ToolContext,
-    ) -> str:
+    ) -> str | dict:
         """
         Apply Jinja2 template substitution.
 
         Args:
-            template_str: Template string
+            template_str: Template string or dict
             params: Parameters to substitute
             context: Execution context
 
         Returns:
-            Rendered string
+            Rendered string or dict
         """
+        # If template is a dict, process each value recursively
+        if isinstance(template_str, dict):
+            result = {}
+            for key, value in template_str.items():
+                if isinstance(value, (str, dict)):
+                    result[key] = self._apply_template(value, params, context)
+                else:
+                    result[key] = value
+            return result
+
+        if not isinstance(template_str, str):
+            return template_str
+
         try:
             template = Template(template_str)
             return template.render(
@@ -380,6 +409,7 @@ class DynamicTool(ToolBase):
                     "tenant_id": context.tenant_id,
                     "user_id": context.user_id,
                     "request_id": context.request_id,
+                    "service_tokens": context.service_tokens,
                 },
             )
         except Exception as e:
@@ -394,6 +424,28 @@ class DynamicTool(ToolBase):
                 result = result.replace(f"{{{{ params.{key} }}}}", str(value))
                 result = result.replace(f"{{{{params.{key}}}}}", str(value))
             return result
+
+    def _get_nested_value(self, data: dict, path: str) -> Any:
+        """
+        Get nested value from dict using dot notation.
+
+        Args:
+            data: Dictionary to search
+            path: Dot-separated path (e.g., "service_tokens.frontend_session.token")
+
+        Returns:
+            Value at path or None
+        """
+        keys = path.split(".")
+        value = data
+        for key in keys:
+            if isinstance(value, dict):
+                value = value.get(key)
+                if value is None:
+                    return None
+            else:
+                return None
+        return value
 
 
 class DynamicToolFactory:

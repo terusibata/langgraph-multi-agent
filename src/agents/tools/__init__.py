@@ -1,4 +1,11 @@
-"""Tools module."""
+"""Tools module.
+
+All Tools are now dynamically created via:
+- Dynamic Tool Definitions (stored in database)
+- OpenAPI-generated Tools (auto-generated from OpenAPI specs)
+
+For examples of static tool implementations, see the examples/tools/ directory.
+"""
 
 from src.agents.tools.base import ToolBase, ToolResult, ToolContext, ToolParameters
 from src.agents.tools.dynamic import (

@@ -1,9 +1,13 @@
-"""SubAgents module."""
+"""SubAgents module.
+
+All SubAgents are now dynamically created via:
+- Dynamic Agent Definitions (stored in database)
+- Ad-hoc Agent Generation (created by Planner at runtime)
+
+For examples of static agent implementations, see the examples/agents/ directory.
+"""
 
 from src.agents.sub_agents.base import SubAgentBase, RetryStrategy
-from src.agents.sub_agents.knowledge_search import KnowledgeSearchAgent
-from src.agents.sub_agents.vector_search import VectorSearchAgent
-from src.agents.sub_agents.catalog import CatalogAgent
 from src.agents.sub_agents.dynamic import (
     DynamicAgent,
     DynamicAgentFactory,
@@ -19,9 +23,6 @@ from src.agents.sub_agents.adhoc import (
 __all__ = [
     "SubAgentBase",
     "RetryStrategy",
-    "KnowledgeSearchAgent",
-    "VectorSearchAgent",
-    "CatalogAgent",
     "DynamicAgent",
     "DynamicAgentFactory",
     "get_dynamic_agent",
