@@ -12,6 +12,9 @@
 - **Admin API**: API経由でエージェント・ツールを動的に管理
 - **エージェントテスト**: サンドボックス環境でエージェントをテスト実行可能
 - **高速応答モード**: 用途に応じて最適な実行モードを選択可能（通常/高速/ダイレクトツール）
+- **JSON形式レスポンス**: スキーマ指定でJSON形式の構造化された応答を取得可能
+- **統一リソースフォーマット**: 全てのツールの検索結果を統一形式で取得
+- **スレッドタイトル自動生成**: 新規会話から日本語で簡潔なタイトルを自動生成
 
 ## アーキテクチャ
 
@@ -120,6 +123,78 @@ curl -X POST http://localhost:8000/api/v1/agent/stream \
   }'
 ```
 
+#### JSON形式レスポンス
+
+Main AgentおよびSub Agentの応答を、指定したJSON schemaに従った構造化データとして取得できます。
+
+**Main Agentの例（翻訳アプリ）:**
+
+```bash
+curl -X POST http://localhost:8000/api/v1/agent/stream \
+  -H "Content-Type: application/json" \
+  -H "X-Access-Key: your-access-key" \
+  -d '{
+    "message": "Translate to English: こんにちは、世界",
+    "response_format": "json",
+    "response_schema": {
+      "type": "object",
+      "properties": {
+        "original_text": {"type": "string"},
+        "translated_text": {"type": "string"},
+        "detected_language": {"type": "string"},
+        "confidence": {"type": "number"}
+      },
+      "required": ["original_text", "translated_text"]
+    },
+    "fast_response": true
+  }'
+```
+
+**レスポンス例:**
+```json
+{
+  "original_text": "こんにちは、世界",
+  "translated_text": "Hello, world",
+  "detected_language": "ja",
+  "confidence": 0.99
+}
+```
+
+**Sub Agentへの設定:**
+
+Admin APIでSub Agentを登録・更新する際に、`response_format`と`response_schema`を指定できます：
+
+```bash
+curl -X POST http://localhost:8000/api/v1/admin/agents \
+  -H "Content-Type: application/json" \
+  -H "X-Access-Key: your-access-key" \
+  -d '{
+    "name": "structured_search_agent",
+    "description": "構造化された検索結果を返すエージェント",
+    "capabilities": ["search", "structured_output"],
+    "tools": ["frontend_servicenow_search"],
+    "response_format": "json",
+    "response_schema": {
+      "type": "object",
+      "properties": {
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": {"type": "string"},
+              "summary": {"type": "string"},
+              "relevance": {"type": "number"}
+            }
+          }
+        },
+        "total_count": {"type": "integer"}
+      }
+    },
+    "enabled": true
+  }'
+```
+
 ### スレッド管理
 
 - `GET /api/v1/threads/{thread_id}` - スレッド情報
@@ -188,10 +263,10 @@ curl -X POST http://localhost:8000/api/v1/agent/stream \
 
 | テーブル名 | 説明 |
 |-----------|------|
-| `agents` | 動的エージェント定義 |
+| `agents` | 動的エージェント定義（response_format, response_schema含む） |
 | `template_agents` | テンプレートエージェント |
 | `tools` | 動的ツール定義 |
-| `threads` | 会話スレッド |
+| `threads` | 会話スレッド（title含む） |
 | `execution_sessions` | 実行セッション |
 | `execution_results` | 実行結果（Ad-hoc仕様含む） |
 | `system_config` | システム設定 |
@@ -206,6 +281,10 @@ alembic upgrade head
 alembic revision --autogenerate -m "description"
 ```
 
+**最新のマイグレーション (002):**
+- `agents`テーブルに`response_format`と`response_schema`カラムを追加（JSON形式レスポンス対応）
+- `threads`テーブルに`title`カラムを追加（スレッドタイトル自動生成対応）
+
 ## 環境変数
 
 | 変数名 | 必須 | デフォルト | 説明 |
@@ -218,6 +297,187 @@ alembic revision --autogenerate -m "description"
 | `ACCESS_KEY_SECRET` | ✓ | - | アクセスキー署名用 |
 | `DEFAULT_MODEL_ID` | - | `claude-3-5-sonnet-20241022-v2:0` | MainAgent |
 | `SUB_AGENT_MODEL_ID` | - | `claude-3-5-haiku-20241022-v1:0` | SubAgent |
+
+## レスポンス形式
+
+### SSEイベントストリーム
+
+`/api/v1/agent/stream`エンドポイントは、以下のSSE（Server-Sent Events）イベントを返します：
+
+| イベント | タイミング | 説明 |
+|---------|----------|------|
+| `session_start` | セッション開始時 | セッションIDとスレッドIDを通知 |
+| `plan_created` | 実行計画作成後 | 実行予定のエージェントとタスクを通知 |
+| `agent_start` | Sub Agent開始時 | エージェント名とタスク内容を通知 |
+| `agent_retry` | リトライ時 | リトライ回数と修正クエリを通知 |
+| `agent_end` | Sub Agent完了時 | ステータスと実行時間を通知 |
+| `tool_call` | ツール呼び出し時 | ツール名とパラメータを通知 |
+| `tool_result` | ツール結果受信時 | 成功/失敗と結果サマリを通知 |
+| `evaluation` | 中間評価時 | 評価結果と次のアクションを通知 |
+| `token` | 応答生成中 | 生成されたトークン（ストリーミング） |
+| `llm_metrics` | LLM呼び出し後 | トークン使用量とコストを通知 |
+| `session_complete` | セッション完了時 | 最終応答と全メトリクスを返却 |
+| `error` | エラー発生時 | エラー情報とリカバリ手順を通知 |
+
+### session_complete イベント構造
+
+セッション完了時に返される最も重要なイベントです：
+
+```json
+{
+  "event": "session_complete",
+  "data": {
+    "session_id": "sess_abc123",
+    "thread_id": "thread_xyz789",
+    "title": "プリンター接続エラーの解決",
+    "response": {
+      "content": "プリンターに接続できない問題について...",
+      "finish_reason": "stop"
+    },
+    "execution_summary": {
+      "plan": {
+        "initial_agents": ["knowledge_search", "catalog_search"],
+        "parallel_groups": [["knowledge_search", "catalog_search"]],
+        "estimated_steps": 2
+      },
+      "agents_executed": [
+        {
+          "name": "knowledge_search",
+          "type": "template",
+          "status": "success",
+          "retries": 0,
+          "search_variations": [],
+          "duration_ms": 1500
+        }
+      ],
+      "tools_executed": [
+        {
+          "tool": "frontend_servicenow_search",
+          "agent": "knowledge_search",
+          "success": true
+        }
+      ]
+    },
+    "metrics": {
+      "duration_ms": 5000,
+      "llm_calls": [
+        {
+          "call_id": "llm_abc123",
+          "model_id": "claude-3-5-sonnet-20241022-v2:0",
+          "agent": "MainAgent",
+          "phase": "plan",
+          "input_tokens": 1000,
+          "output_tokens": 200,
+          "cost_usd": 0.005
+        }
+      ],
+      "totals": {
+        "input_tokens": 1500,
+        "output_tokens": 500,
+        "total_tokens": 2000,
+        "total_cost_usd": 0.01,
+        "llm_call_count": 3,
+        "tool_call_count": 2
+      }
+    },
+    "thread_state": {
+      "status": "active",
+      "context_tokens_used": 2000,
+      "context_max_tokens": 200000,
+      "context_usage_percent": 1.0,
+      "message_count": 1,
+      "thread_total_tokens": 2000,
+      "thread_total_cost_usd": 0.01
+    },
+    "resources": [
+      {
+        "id": "KB001",
+        "type": "knowledge_base",
+        "title": "プリンター接続トラブルシューティング",
+        "content": "プリンターに接続できない場合の対処法...",
+        "score": 0.95,
+        "tool_name": "frontend_servicenow_search",
+        "metadata": {
+          "category": "IT Support",
+          "last_updated": "2024-01-15"
+        }
+      },
+      {
+        "id": "DOC456",
+        "type": "document",
+        "title": "ネットワーク設定ガイド",
+        "content": null,
+        "score": 0.82,
+        "tool_name": "vector_search",
+        "metadata": {
+          "author": "IT Team",
+          "version": "2.0"
+        }
+      }
+    ]
+  }
+}
+```
+
+### 統一リソースフォーマット
+
+`resources`配列に含まれる各リソースは以下の統一形式に従います：
+
+| フィールド | 型 | 必須 | 説明 |
+|-----------|-----|------|------|
+| `id` | string | ✓ | リソースID（sys_id、KB番号など） |
+| `type` | string | ✓ | リソース種別（後述） |
+| `title` | string | ✓ | リソースタイトル |
+| `content` | string \| null | - | リソース内容またはスニペット |
+| `score` | number \| null | - | 関連度スコア（0.0-1.0） |
+| `tool_name` | string | ✓ | このリソースを取得したツール名 |
+| `metadata` | object | ✓ | ツール固有の追加情報 |
+
+**リソース種別 (`type`):**
+
+- `knowledge_base`: ナレッジベース記事
+- `document`: ドキュメント・ファイル
+- `catalog`: サービスカタログ項目
+- `search_result`: 一般的な検索結果
+- `general`: その他
+
+### スレッドタイトル自動生成
+
+新規スレッド（初回メッセージ）の場合、会話内容から日本語で簡潔なタイトル（最大30文字）が自動生成されます：
+
+- `session_complete`イベントの`title`フィールドに含まれます
+- スレッド情報（`GET /api/v1/threads/{thread_id}`）でも取得可能
+- 会話のトピックを表す、わかりやすいタイトルが生成されます
+
+**タイトル例:**
+- "プリンター接続エラーの解決"
+- "パスワードリセット手順"
+- "新規ユーザー登録方法"
+- "VPN接続トラブルシューティング"
+
+### JSON形式レスポンス時の構造
+
+`response_format: "json"`を指定した場合、`response.content`には指定したスキーマに従ったJSON文字列が返されます：
+
+```json
+{
+  "response": {
+    "content": "{\"original_text\":\"こんにちは、世界\",\"translated_text\":\"Hello, world\",\"detected_language\":\"ja\",\"confidence\":0.99}",
+    "finish_reason": "stop"
+  }
+}
+```
+
+パース後:
+```javascript
+const response = JSON.parse(data.response.content);
+// {
+//   original_text: "こんにちは、世界",
+//   translated_text: "Hello, world",
+//   detected_language: "ja",
+//   confidence: 0.99
+// }
+```
 
 ## 動的ツールの使用方法
 
