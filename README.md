@@ -58,7 +58,7 @@ cd docker
 docker compose up -d
 
 # 3. マイグレーション（コンテナ内）
-docker compose exec api alembic upgrade head
+docker compose exec app alembic upgrade head
 
 # 4. ヘルスチェック
 curl http://localhost:8000/health
