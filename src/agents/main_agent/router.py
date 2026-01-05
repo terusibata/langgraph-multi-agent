@@ -1,10 +1,8 @@
 """Router component for MainAgent."""
 
-from typing import Literal
-
 import structlog
 
-from src.agents.state import AgentState, ExecutionPlan
+from src.agents.state import AgentState
 
 logger = structlog.get_logger()
 

@@ -1,7 +1,5 @@
 """Error handling service."""
 
-from typing import Any
-
 import structlog
 
 from src.services.metrics import get_metrics_collector

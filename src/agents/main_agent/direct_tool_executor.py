@@ -2,8 +2,7 @@
 
 from typing import Any, AsyncIterator
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 import structlog
 
 from src.agents.state import AgentState, ToolResult

@@ -1,6 +1,6 @@
 """Execution session and result database models."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text, JSON, DateTime

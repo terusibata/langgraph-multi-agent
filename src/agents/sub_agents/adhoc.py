@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 import structlog
 
 from src.agents.state import AdHocAgentSpec, AgentState, SubAgentResult

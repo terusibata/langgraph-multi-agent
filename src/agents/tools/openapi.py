@@ -1,7 +1,6 @@
 """OpenAPI specification parser and tool generator."""
 
 import re
-from typing import Any
 from urllib.parse import urljoin
 
 import structlog

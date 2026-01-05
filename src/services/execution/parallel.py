@@ -2,7 +2,7 @@
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Callable, Any
+from typing import Callable
 
 import structlog
 

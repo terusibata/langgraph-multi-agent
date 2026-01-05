@@ -4,7 +4,6 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel, Field
 import structlog
 

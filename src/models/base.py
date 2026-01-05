@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import AsyncGenerator
 
-from sqlalchemy import DateTime, func, text
+from sqlalchemy import DateTime, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 

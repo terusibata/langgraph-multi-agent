@@ -1,9 +1,9 @@
 """Thread database models."""
 
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any
 
-from sqlalchemy import Boolean, Float, Integer, String, JSON
+from sqlalchemy import Float, Integer, String, JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.base import Base, TimestampMixin

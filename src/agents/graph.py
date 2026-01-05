@@ -3,7 +3,6 @@
 from typing import Any, AsyncIterator
 
 from langgraph.graph import StateGraph, END, START
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langchain_core.messages import HumanMessage
 import structlog
 

@@ -1,8 +1,7 @@
 """SSE (Server-Sent Events) streaming service."""
 
 import asyncio
-from typing import AsyncIterator, Any
-from datetime import datetime
+from typing import AsyncIterator
 
 from sse_starlette.sse import EventSourceResponse
 import structlog

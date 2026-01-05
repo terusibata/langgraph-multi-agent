@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import structlog
 
-from src.agents.state import AgentState, RequestContext, SubAgentResult, AdHocAgentSpec, create_initial_state
+from src.agents.state import AgentState, RequestContext, AdHocAgentSpec, create_initial_state
 from src.agents.sub_agents.adhoc import AdHocAgentFactory
 from src.agents.sub_agents.dynamic import DynamicAgentFactory
 from src.agents.registry import get_agent_registry
